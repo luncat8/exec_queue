@@ -1,8 +1,10 @@
 time priority queue (discrete event simulation)
 
-the fastest way to insert into the middle of an array and create a queue ordered by execution time? min-heap?
+the fastest way to insert into the middle of an array and create a queue ordered by execution time?
 
-simultaneous events — that doesn’t matter; they can be in any order. What matters is that the ship sets the arrival time, which is then added to the queue, and that after the event is processed, the ship immediately calculates the next destination, even if the timer advances by several steps at once.
+Equal timestamps events — doesn’t matter, can be unordered.
+
+What matters is that the ship sets the arrival time, which is then added to the queue, and that after the event is processed, the ship immediately calculates the next destination, even if the timer advances by several steps at once.
 
 It’s important that the next voyage starts from the event’s arrival time, not from the current frame time. That way, a timer jump that skips over several events won’t break the calculations.
 
@@ -12,3 +14,6 @@ game events. need a queue to process and insert events by time. for example, a d
 request demo:
 html js demo. random sea ships trading goods between ports. time speed slider can be set to >> then time of ship travel
 display supplies as vertical bars r, g, b
+
+
+A binary min-heap is the right structure. Sorted-array insertion is O(n) due to the memmove; measured with 50,000 events (push + drain) in experiments/queue_bench.js: heap ~11 ms vs sorted array ~167 ms (≈15×).

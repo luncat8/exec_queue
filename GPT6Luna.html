@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Морская торговля</title>
+  <style>
+    body {
+      margin: 20px;
+      font: 16px system-ui, sans-serif;
+      background: #eef7fa;
+      color: #18313b;
+    }
+
+    h1 { margin-bottom: 8px; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    canvas {
+      display: block;
+      width: min(100%, 850px);
+      border: 1px solid #8bbbc8;
+      border-radius: 10px;
+      margin: 14px 0;
+    }
+
+    #map { background: #b9e3ed; }
+    #stockChart { background: white; }
+
+    #ports, #log { max-width: 850px; }
+
+    #log {
+      height: 150px;
+      overflow: auto;
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Морская торговля</h1>
+
+  <div class="controls">
+    <button id="toggle">Пауза</button>
+    <label>
+      Скорость:
+      <input id="speed" type="range" min="1" max="100" value="10">
+      <span id="speedLabel">10×</span>
+    </label>
+    <span id="clock"></span>
+  </div>
+
+  <canvas id="map" width="850" height="430"></canvas>
+
+  <h2>Запасы в портах</h2>
+  <div class="legend">
+    <span>🟨 Зерно</span>
+    <span>🟫 Дерево</span>
+    <span>🩶 Железо</span>
+  </div>
+  <canvas id="stockChart" width="850" height="260"></canvas>
+
+  <h2>События</h2>
+  <div id="log"></div>
+
+<script>
+const mapCanvas = document.querySelector("#map");
+const mapCtx = mapCanvas.getContext("2d");
+const chartCanvas = document.querySelector("#stockChart");
+const chartCtx = chartCanvas.getContext("2d");
+
+const ports = [
+  { name: "Северный порт", x: 130, y: 100, stock: { зерно: 30, дерево: 8, железо: 5 } },
+  { name: "Западный порт", x: 230, y: 310, stock: { зерно: 8, дерево: 30, железо: 5 } },
+  { name: "Восточный порт", x: 540, y: 110, stock: { зерно: 5, дерево: 8, железо: 30 } },
+  { name: "Южный порт", x: 690, y: 310, stock: { зерно: 20, дерево: 15, железо: 10 } }
+];
+
+const goods = ["зерно", "дерево", "железо"];
+const goodsColors = {
+  зерно: "#e9b949",
+  дерево: "#9a6843",
+  железо: "#778899"
+};
+
+// Минимальная куча: событие с самым ранним временем всегда находится наверху.
+class EventQueue {
+  constructor() {
+    this.items = [];
+  }
+
+  push(event) {
+    const a = this.items;
+    a.push(event);
+
+    let i = a.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (a[parent].time <= event.time) break;
+
+      a[i] = a[parent];
+      i = parent;
+    }
+
+    a[i] = event;
+  }
+
+  pop() {
+    const a = this.items;
+    if (a.length === 0) return null;
+
+    const first = a[0];
+    const last = a.pop();
+
+    if (a.length > 0) {
+      let i = 0;
+
+      while (true) {
+        let child = i * 2 + 1;
+        if (child >= a.length) break;
+
+        if (child + 1 < a.length && a[child + 1].time < a[child].time) {
+          child++;
+        }
+
+        if (a[child].time >= last.time) break;
+
+        a[i] = a[child];
+        i = child;
+      }
+
+      a[i] = last;
+    }
+
+    return first;
+  }
+
+  peek() {
+    return this.items[0] ?? null;
+  }
+}
+
+const queue = new EventQueue();
+let now = 0; // игровое время в часах
+let paused = false;
+let lastFrame = performance.now();
+let nextShipId = 1;
+
+const ships = [
+  { id: nextShipId++, from: 0, to: 1, cargo: [] },
+  { id: nextShipId++, from: 2, to: 3, cargo: [] },
+  { id: nextShipId++, from: 1, to: 2, cargo: [] }
+];
+
+function formatTime(hours) {
+  const day = Math.floor(hours / 24) + 1;
+  const hour = Math.floor(hours % 24);
+  return `День ${day}, ${String(hour).padStart(2, "0")}:00`;
+}
+
+function log(text, eventTime = now) {
+  const logElement = document.querySelector("#log");
+  const line = document.createElement("div");
+  line.textContent = `${formatTime(eventTime)} — ${text}`;
+  logElement.prepend(line);
+}
+
+function calculateTravelTime(from, to) {
+  const a = ports[from];
+  const b = ports[to];
+  const distance = Math.hypot(b.x - a.x, b.y - a.y);
+
+  // Демонстрационная модель: расстояние влияет на время пути.
+  return Math.round(distance / 12) + 2;
+}
+
+function scheduleArrival(ship, from, to, departureTime) {
+  const travelHours = calculateTravelTime(from, to);
+
+  ship.from = from;
+  ship.to = to;
+  ship.departureTime = departureTime;
+  ship.arrivalTime = departureTime + travelHours;
+
+  queue.push({
+    time: ship.arrivalTime,
+    type: "arrival",
+    ship
+  });
+}
+
+function loadCargo(port) {
+  const cargo = [];
+
+  for (const good of goods) {
+    const amount = Math.min(
+      port.stock[good],
+      Math.floor(Math.random() * 9)
+    );
+
+    if (amount > 0) {
+      port.stock[good] -= amount;
+      cargo.push({ good, amount });
+    }
+  }
+
+  return cargo;
+}
+
+function chooseNextPort(currentPortIndex) {
+  let destination;
+
+  do {
+    destination = Math.floor(Math.random() * ports.length);
+  } while (destination === currentPortIndex);
+
+  return destination;
+}
+
+function handleArrival(ship, eventTime) {
+  const port = ports[ship.to];
+
+  // Выгрузить весь груз в запасы порта.
+  for (const item of ship.cargo) {
+    port.stock[item.good] += item.amount;
+  }
+
+  const unloaded = ship.cargo
+    .map(item => `${item.amount} ${item.good}`)
+    .join(", ") || "пустой трюм";
+
+  ship.cargo = [];
+
+  log(
+    `Корабль ${ship.id} прибыл в «${port.name}», выгрузил: ${unloaded}.`,
+    eventTime
+  );
+
+  // Загрузить доступные товары и сразу запланировать следующий рейс.
+  ship.cargo = loadCargo(port);
+
+  const from = ship.to;
+  const destination = chooseNextPort(from);
+
+  log(
+    `Корабль ${ship.id} отправляется в «${ports[destination].name}».`,
+    eventTime
+  );
+
+  // Важно: отправление отсчитывается от времени события,
+  // а не от текущего времени кадра.
+  scheduleArrival(ship, from, destination, eventTime);
+}
+
+function drawMap() {
+  const ctx = mapCtx;
+  ctx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+
+  // Декоративные острова.
+  ctx.fillStyle = "#d6e5b8";
+
+  for (const [x, y, rx, ry] of [
+    [380, 240, 75, 32],
+    [80, 220, 35, 18],
+    [770, 100, 28, 15]
+  ]) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Возможные маршруты.
+  ctx.strokeStyle = "rgba(25, 77, 94, .25)";
+  ctx.setLineDash([5, 6]);
+
+  for (let i = 0; i < ports.length; i++) {
+    for (let j = i + 1; j < ports.length; j++) {
+      ctx.beginPath();
+      ctx.moveTo(ports[i].x, ports[i].y);
+      ctx.lineTo(ports[j].x, ports[j].y);
+      ctx.stroke();
+    }
+  }
+
+  ctx.setLineDash([]);
+
+  // Корабли движутся согласно игровому времени.
+  for (const ship of ships) {
+    const from = ports[ship.from];
+    const to = ports[ship.to];
+
+    const progress = Math.max(0, Math.min(1,
+      (now - ship.departureTime) /
+      (ship.arrivalTime - ship.departureTime)
+    ));
+
+    const x = from.x + (to.x - from.x) * progress;
+    const y = from.y + (to.y - from.y) * progress;
+
+    ctx.font = "24px sans-serif";
+    ctx.fillText("🚢", x - 12, y + 8);
+
+    ctx.font = "12px system-ui";
+    ctx.fillStyle = "#18313b";
+    ctx.fillText(`#${ship.id}`, x - 8, y + 23);
+  }
+
+  // Порты.
+  for (const port of ports) {
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(port.x, port.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#18313b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = "#18313b";
+    ctx.font = "14px system-ui";
+    ctx.fillText(port.name, port.x - 48, port.y - 17);
+  }
+}
+
+function drawStockChart() {
+  const ctx = chartCtx;
+  const width = chartCanvas.width;
+  const height = chartCanvas.height;
+
+  ctx.clearRect(0, 0, width, height);
+
+  const margin = { left: 48, right: 15, top: 20, bottom: 48 };
+  const chartHeight = height - margin.top - margin.bottom;
+  const chartWidth = width - margin.left - margin.right;
+
+  const maxStock = Math.max(
+    20,
+    ...ports.flatMap(port => goods.map(good => port.stock[good]))
+  );
+
+  // Ось и горизонтальные ориентиры.
+  ctx.font = "12px system-ui";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.strokeStyle = "#d7e1e5";
+  ctx.fillStyle = "#52666e";
+
+  for (let i = 0; i <= 4; i++) {
+    const value = Math.round(maxStock * i / 4);
+    const y = margin.top + chartHeight - chartHeight * i / 4;
+
+    ctx.beginPath();
+    ctx.moveTo(margin.left, y);
+    ctx.lineTo(width - margin.right, y);
+    ctx.stroke();
+
+    ctx.fillText(String(value), margin.left - 8, y);
+  }
+
+  const groupWidth = chartWidth / ports.length;
+  const barWidth = 24;
+  const barGap = 8;
+
+  ports.forEach((port, portIndex) => {
+    const groupCenter = margin.left + groupWidth * (portIndex + 0.5);
+    const totalBarsWidth = goods.length * barWidth + (goods.length - 1) * barGap;
+    const startX = groupCenter - totalBarsWidth / 2;
+
+    goods.forEach((good, goodIndex) => {
+      const amount = port.stock[good];
+      const barHeight = chartHeight * amount / maxStock;
+      const x = startX + goodIndex * (barWidth + barGap);
+      const y = margin.top + chartHeight - barHeight;
+
+      ctx.fillStyle = goodsColors[good];
+      ctx.fillRect(x, y, barWidth, barHeight);
+
+      ctx.fillStyle = "#18313b";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(String(amount), x + barWidth / 2, y - 3);
+    });
+
+    ctx.fillStyle = "#18313b";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(port.name, groupCenter, height - margin.bottom + 10);
+  });
+}
+
+function update() {
+  const speed = Number(document.querySelector("#speed").value);
+  document.querySelector("#speedLabel").textContent = `${speed}×`;
+
+  const realSeconds = Math.min(
+    (performance.now() - lastFrame) / 1000,
+    0.1
+  );
+  lastFrame = performance.now();
+
+  if (!paused) {
+    // При 1× одна реальная секунда равна 60 игровым часам.
+    now += realSeconds * speed * 60;
+  }
+
+  // Выполнить все события, уже наступившие к текущему игровому времени.
+  // Обработчик может добавить новое событие — цикл проверит и его тоже.
+  let event;
+  let processed = 0;
+
+  while ((event = queue.peek()) && event.time <= now && processed < 10000) {
+    queue.pop();
+    handleArrival(event.ship, event.time);
+    processed++;
+  }
+
+  document.querySelector("#clock").textContent = formatTime(now);
+
+  drawMap();
+  drawStockChart();
+
+  requestAnimationFrame(update);
+}
+
+document.querySelector("#toggle").addEventListener("click", event => {
+  paused = !paused;
+  event.currentTarget.textContent = paused ? "Продолжить" : "Пауза";
+});
+
+document.querySelector("#speed").addEventListener("input", event => {
+  document.querySelector("#speedLabel").textContent = `${event.target.value}×`;
+});
+
+// Запустить первые рейсы.
+for (const ship of ships) {
+  ship.cargo = loadCargo(ports[ship.from]);
+  scheduleArrival(ship, ship.from, ship.to, 0);
+}
+
+update();
+</script>
+</body>
+</html>

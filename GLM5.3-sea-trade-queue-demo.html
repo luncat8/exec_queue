@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Морская торговля — очередь событий на min-heap</title>
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		:root {
+			--bg: #0b1524;
+			--panel: #101d31;
+			--panel2: #0d1828;
+			--line: #1d3252;
+			--text: #d7e3f4;
+			--dim: #7f95b3;
+			--accent: #4cc2ff;
+		}
+		html, body { height: 100%; }
+		body {
+			background: var(--bg);
+			color: var(--text);
+			font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+			display: flex;
+			flex-direction: column;
+		}
+		header {
+			padding: 10px 16px;
+			border-bottom: 1px solid var(--line);
+			display: flex;
+			align-items: baseline;
+			gap: 14px;
+			flex-wrap: wrap;
+		}
+		header h1 { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
+		header .sub { color: var(--dim); font-size: 12.5px; }
+		main { flex: 1; display: flex; min-height: 0; }
+		#mapWrap { flex: 1; position: relative; min-width: 0; }
+		canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+		aside {
+			width: 390px;
+			flex: none;
+			overflow-y: auto;
+			border-left: 1px solid var(--line);
+			background: var(--panel2);
+		}
+		.block { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+		.block h2 {
+			font-size: 11px;
+			text-transform: uppercase;
+			letter-spacing: 1.2px;
+			color: var(--dim);
+			margin-bottom: 8px;
+			font-weight: 600;
+		}
+		.clockRow { display: flex; align-items: baseline; gap: 10px; }
+		#clock { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+		#dayLabel { color: var(--dim); font-size: 13px; }
+		.speedRow { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+		.mm { color: var(--dim); font-size: 11px; flex: none; }
+		input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
+		#speedLabel { min-width: 120px; text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); font-size: 12px; }
+		#speedLabel b { color: var(--accent); font-size: 16px; }
+		.btnRow { display: flex; gap: 8px; margin-top: 10px; }
+		button {
+			background: #16273f;
+			color: var(--text);
+			border: 1px solid var(--line);
+			border-radius: 6px;
+			padding: 6px 12px;
+			cursor: pointer;
+			font: inherit;
+			font-size: 13px;
+		}
+		button:hover { border-color: var(--accent); color: #fff; }
+		.statsGrid {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 6px 14px;
+			font-variant-numeric: tabular-nums;
+			font-size: 13px;
+		}
+		.statsGrid .k { color: var(--dim); }
+		.logBox, .qBox {
+			max-height: 230px;
+			overflow-y: auto;
+			font-size: 12px;
+			font-family: ui-monospace, Consolas, monospace;
+		}
+		.row { display: flex; gap: 6px; padding: 2px 0; align-items: baseline; }
+		.row .t { color: var(--dim); flex: none; }
+		.tag {
+			flex: none;
+			font-size: 10px;
+			padding: 0 4px;
+			border-radius: 3px;
+			border: 1px solid;
+			line-height: 15px;
+		}
+		.tag.depart { color: #7fd0ff; border-color: #2b6f9e; }
+		.tag.arrive { color: #ffd27f; border-color: #9e7d2b; }
+		.tag.unload { color: #ff9f7f; border-color: #9e562b; }
+		.tag.load { color: #9fff9c; border-color: #3f9e46; }
+		.tag.produce { color: #c7a6ff; border-color: #6f4b9e; }
+		.tag.spawn { color: #9fb3c8; border-color: #45586e; }
+		.row .m { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
+		.legendRow { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--dim); }
+		.legendRow i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+		details { font-size: 12.5px; color: var(--dim); }
+		details summary { cursor: pointer; color: var(--text); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+		details p { margin-top: 8px; }
+		details table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+		details td, details th { border: 1px solid var(--line); padding: 3px 6px; text-align: left; }
+		details th { color: var(--text); font-weight: 600; }
+		@media (max-width: 860px) {
+			main { flex-direction: column; }
+			aside { width: 100%; border-left: none; border-top: 1px solid var(--line); max-height: 55vh; }
+			#mapWrap { min-height: 45vh; }
+		}
+	</style>
+</head>
+<body>
+	<header>
+		<h1>Морская торговая симуляция</h1>
+		<span class="sub">дискретно-событийная модель: все действия — события с меткой времени в бинарной куче (min-heap), вставка O(log n)</span>
+	</header>
+	<main>
+		<div id="mapWrap"><canvas id="sea"></canvas></div>
+		<aside>
+			<div class="block">
+				<h2>Время</h2>
+				<div class="clockRow">
+					<span id="clock">08:00</span>
+					<span id="dayLabel">День 1</span>
+				</div>
+				<div class="speedRow">
+					<span class="mm">×1</span>
+					<input id="speed" type="range" min="0" max="100" value="30" title="Скорость симуляции">
+					<span class="mm">×1000</span>
+					<span id="speedLabel"></span>
+				</div>
+				<div class="btnRow">
+					<button id="pauseBtn">Пауза</button>
+					<button id="addShipBtn">+ Корабль</button>
+					<button id="resetBtn">Сброс</button>
+				</div>
+			</div>
+			<div class="block">
+				<h2>Статистика</h2>
+				<div class="statsGrid">
+					<span class="k">Кораблей</span><span id="stShips">—</span>
+					<span class="k">Событий обработано</span><span id="stEvents">—</span>
+					<span class="k">Узлов в куче</span><span id="stHeap">—</span>
+					<span class="k">push / pop</span><span id="stOps">—</span>
+					<span class="k">Рейсов завершено</span><span id="stTrips">—</span>
+					<span class="k">Груза доставлено</span><span id="stCargo">—</span>
+				</div>
+			</div>
+			<div class="block">
+				<h2>Ближайшие события</h2>
+				<div id="queueBox" class="qBox"></div>
+				<div class="hint">Показаны отсортированно для читаемости; в куче порядок частичный — гарантируется только минимум сверху.</div>
+			</div>
+			<div class="block">
+				<h2>Журнал событий</h2>
+				<div id="logBox" class="logBox"></div>
+			</div>
+			<div class="block">
+				<h2>Грузы</h2>
+				<div id="legend" class="legendRow"></div>
+			</div>
+			<div class="block">
+				<details>
+					<summary>Почему min-heap, а не linked list?</summary>
+					<p>Каждое действие — событие с меткой времени: отход, прибытие, разгрузка, погрузка, производство, появление корабля. Все лежат в бинарной куче на обычном JS-массиве. Главный цикл достаёт события, пока их время не превысит текущее: O(log n) на событие, «вставка в середину массива» не требуется вовсе.</p>
+					<table>
+						<tr><th>Структура</th><th>Вставка</th><th>Ближайшее</th><th>Заметки</th></tr>
+						<tr><td>Min-heap на массиве</td><td>O(log n)</td><td>O(log n) pop, O(1) peek</td><td>стандарт игровых таймеров и DES</td></tr>
+						<tr><td>Сорт. linked list</td><td>O(n) поиск + O(1) сшивка</td><td>O(1)</td><td>pointer chasing, аллокации — медленнее на практике</td></tr>
+						<tr><td>Сорт. массив + splice</td><td>O(log n) поиск + O(n) сдвиг</td><td>O(1) с конца</td><td>до ~10³ событий часто быстрее кучи (memmove, кэш)</td></tr>
+						<tr><td>Timing wheel</td><td>O(1)</td><td>O(1) на тик</td><td>если время дискретно фиксированным шагом</td></tr>
+					</table>
+					<p>При равных временах порядок стабилен благодаря ключу (t, seq) — события выполняются в порядке добавления (FIFO). Ускорение до ×1000 не меняет логику: просто за кадр обрабатывается больше событий из кучи. Погрузка берёт min(трюм, остаток на складе) — следующий корабль забирает остаток.</p>
+				</details>
+			</div>
+		</aside>
+	</main>
+	<script>
+		'use strict';
+
+		// ===================== УТИЛИТЫ =====================
+		const rand = (a, b) => a + Math.random() * (b - a);
+		const randInt = (a, b) => Math.floor(rand(a, b + 1));
+		const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+		const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+		const lerp = (a, b, u) => a + (b - a) * u;
+
+		function fmtTime(t) {
+			const hh = Math.floor(t % 24);
+			const mm = Math.floor((t * 60) % 60);
+			return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+		}
+		function fmtDay(t) {
+			return 'День ' + (Math.floor(t / 24) + 1);
+		}
+
+		// ===================== ОЧЕРЕДЬ СОБЫТИЙ: БИНАРНАЯ КУЧА (min-heap) =====================
+		class EventQueue {
+			constructor() {
+				this.heap = [];
+				this.seq = 0;      // стабилизатор FIFO при равном времени
+				this.pushes = 0;
+				this.pops = 0;
+			}
+			static less(a, b) {
+				return a.t < b.t || (a.t === b.t && a.seq < b.seq);
+			}
+			push(evt) {
+				const h = this.heap;
+				evt.seq = this.seq++;
+				h.push(evt);
+				let i = h.length - 1;
+				while (i > 0) {
+					const p = (i - 1) >> 1;
+					if (EventQueue.less(h[i], h[p])) {
+						[h[i], h[p]] = [h[p], h[i]];
+						i = p;
+					} else {
+						break;
+					}
+				}
+				this.pushes++;
+			}
+			peek() {
+				return this.heap.length ? this.heap[0] : null;
+			}
+			pop() {
+				const h = this.heap;
+				if (!h.length) return null;
+				const top = h[0];
+				const last = h.pop();
+				if (h.length) {
+					h[0] = last;
+					let i = 0;
+					for (;;) {
+						const l = i * 2 + 1;
+						const r = l + 1;
+						let m = i;
+						if (l < h.length && EventQueue.less(h[l], h[m])) m = l;
+						if (r < h.length && EventQueue.less(h[r], h[m])) m = r;
+						if (m === i) break;
+						[h[i], h[m]] = [h[m], h[i]];
+						i = m;
+					}
+				}
+				this.pops++;
+				return top;
+			}
+			get size() {
+				return this.heap.length;
+			}
+			upcoming(n) {
+				return this.heap.slice().sort((a, b) => (a.t - b.t) || (a.seq - b.seq)).slice(0, n);
+			}
+		}
+
+		// ===================== МИР =====================
+		const CARGO = {
+			wood:  { name: 'древесина', color: '#6fbf73' },
+			grain: { name: 'зерно',     color: '#e6c25a' },
+			spice: { name: 'специи',    color: '#ff8a5c' },
+			ore:   { name: 'руда',      color: '#aab4c0' },
+			cloth: { name: 'ткани',     color: '#a887e8' },
+		};
+		const CARGO_KEYS = Object.keys(CARGO);
+
+		const PORTS = [
+			{ id: 0, name: 'Нордвик',   x: 150, y: 140, makes: ['wood', 'ore'] },
+			{ id: 1, name: 'Вестланд',  x: 120, y: 430, makes: ['grain', 'cloth'] },
+			{ id: 2, name: 'Зюйдбухта', x: 500, y: 540, makes: ['spice', 'grain'] },
+			{ id: 3, name: 'Остхавн',   x: 880, y: 420, makes: ['ore', 'cloth'] },
+			{ id: 4, name: 'Нордштерн', x: 850, y: 120, makes: ['cloth', 'wood'] },
+			{ id: 5, name: 'Мидгар',    x: 490, y: 295, makes: ['spice', 'ore'] },
+		];
+
+		const SHIP_NAMES = ['Аргонавт', 'Персей', 'Аврора', 'Заря', 'Комета', 'Северждан', 'Меридиан', 'Бриз', 'Пелин', 'Каскад', 'Ветер', 'Сокол', 'Тайфун', 'Мираж', 'Атлант', 'Нептун', 'Иртыш', 'Волна', 'Сатурн', 'Полярный', 'Зенит', 'Корсар', 'Легенда', 'Фарватер'];
+
+		const TAGS = {
+			depart: 'ОТХОД',
+			arrive: 'ПРИБ',
+			unload: 'РАЗГР',
+			load:   'ПОГР',
+			produce: 'ПРОИЗВ',
+			spawn:  'НОВЫЙ',
+		};
+
+		const MAX_SHIPS = 26;
+		const SIM_HOURS_PER_SEC = 0.2;      // 1 реальная секунда при ×1 = 12 сим-минут
+		const EVENTS_PER_FRAME_CAP = 30000; // защита от «шторма» событий при ×1000
+		const WORLD_W = 1000;
+		const WORLD_H = 620;
+
+		let queue, ships, simTime, stats, shipSeq;
+		let paused = false;
+		let speedMult = 8;
+		const fx = [];
+
+		function schedule(t, type, ship) {
+			queue.push({ t, type, ship });
+		}
+
+		function resetWorld() {
+			queue = new EventQueue();
+			ships = [];
+			simTime = 8;   // старт в 08:00 дня 1
+			shipSeq = 0;
+			stats = { processed: 0, trips: 0, delivered: 0 };
+			fx.length = 0;
+			for (const p of PORTS) {
+				p.stock = {};
+				for (const k of CARGO_KEYS) p.stock[k] = 0;
+				for (const k of p.makes) p.stock[k] = randInt(30, 80);
+				p.dockCounter = 0;
+			}
+			for (let i = 0; i < 8; i++) spawnShip(simTime + rand(0, 0.5), true);
+			schedule(simTime + 0.5, 'produce', null);
+			schedule(simTime + rand(6, 12), 'spawn', null);
+		}
+
+		function spawnShip(t, quiet) {
+			if (ships.length >= MAX_SHIPS) return;
+			const port = pick(PORTS);
+			const n = ++shipSeq;
+			const base = SHIP_NAMES[(n - 1) % SHIP_NAMES.length];
+			const ship = {
+				id: n,
+				name: base + (n > SHIP_NAMES.length ? ' ' + Math.ceil(n / SHIP_NAMES.length) : ''),
+				capacity: randInt(18, 40),
+				cargo: null,          // { type, amount }
+				state: 'idle',
+				portId: port.id,
+				destId: null,
+				route: null,          // { from, to, departT, arriveT }
+				dockSlot: 0,
+				v: rand(260, 420),    // мировых единиц в час
+			};
+			ships.push(ship);
+			schedule(t + 0.05, 'load', ship);
+			if (!quiet) logEvent(t, 'spawn', '«' + ship.name + '» появился в порту ' + port.name);
+		}
+
+		function travelHours(a, b, v) {
+			return Math.hypot(b.x - a.x, b.y - a.y) / v;
+		}
+
+		// ===================== ОБРАБОТКА СОБЫТИЙ =====================
+		function handleEvent(e) {
+			const s = e.ship;
+			switch (e.type) {
+				case 'produce': {
+					for (const p of PORTS) {
+						for (const k of p.makes) {
+							if (p.stock[k] < 220) p.stock[k] = Math.min(220, p.stock[k] + randInt(2, 5));
+						}
+					}
+					schedule(e.t + 0.5, 'produce', null);
+					break;
+				}
+				case 'spawn': {
+					spawnShip(e.t);
+					schedule(e.t + rand(6, 14), 'spawn', null);
+					break;
+				}
+				case 'depart': {
+					const from = PORTS[s.portId];
+					const to = PORTS[s.destId];
+					const travel = travelHours(from, to, s.v);
+					s.route = { from: from.id, to: to.id, departT: e.t, arriveT: e.t + travel };
+					s.state = 'sailing';
+					s.portId = null;
+					schedule(e.t + travel, 'arrive', s);
+					logEvent(e.t, 'depart', '«' + s.name + '» ' + from.name + ' → ' + to.name + (s.cargo ? ' · ' + s.cargo.amount + ' ' + CARGO[s.cargo.type].name : ''));
+					break;
+				}
+				case 'arrive': {
+					const p = PORTS[s.route.to];
+					s.portId = p.id;
+					s.dockSlot = p.dockCounter++ % 8;
+					s.state = 'unloading';
+					s.route = null;
+					stats.trips++;
+					schedule(e.t + rand(0.15, 0.45), 'unload', s);
+					if (fx.length < 80) fx.push({ x: p.x, y: p.y, t0: performance.now() });
+					logEvent(e.t, 'arrive', '«' + s.name + '» прибыл в ' + p.name);
+					break;
+				}
+				case 'unload': {
+					const p = PORTS[s.portId];
+					if (s.cargo) {
+						p.stock[s.cargo.type] = Math.min(260, p.stock[s.cargo.type] + s.cargo.amount);
+						stats.delivered += s.cargo.amount;
+						logEvent(e.t, 'unload', '«' + s.name + '» разгрузился в ' + p.name + ': +' + s.cargo.amount + ' ' + CARGO[s.cargo.type].name);
+						s.cargo = null;
+					}
+					s.state = 'loading';
+					schedule(e.t + rand(0.15, 0.4), 'load', s);
+					break;
+				}
+				case 'load': {
+					const p = PORTS[s.portId];
+					const candidates = CARGO_KEYS.filter((k) => p.stock[k] >= 6);
+					if (!candidates.length) {
+						s.state = 'idle';   // склад пуст — попробуем позже
+						schedule(e.t + 0.4, 'load', s);
+						break;
+					}
+					// взвешенный выбор груза по остаткам
+					let total = 0;
+					for (const k of candidates) total += p.stock[k];
+					let r = Math.random() * total;
+					let type = candidates[0];
+					for (const k of candidates) {
+						r -= p.stock[k];
+						if (r <= 0) { type = k; break; }
+					}
+					const amount = Math.min(s.capacity, p.stock[type]);
+					p.stock[type] -= amount;
+					s.cargo = { type, amount };
+					const demand = PORTS.filter((q) => q.id !== p.id && !q.makes.includes(type));
+					const dest = demand.length ? pick(demand) : pick(PORTS.filter((q) => q.id !== p.id));
+					s.destId = dest.id;
+					s.state = 'loading';
+					logEvent(e.t, 'load', '«' + s.name + '» погрузил ' + amount + ' ' + CARGO[type].name + ' в ' + p.name + (amount < s.capacity ? ' (взял часть — остаток ждёт следующего)' : '') + ' → ' + dest.name);
+					schedule(e.t + rand(0.2, 0.5), 'depart', s);
+					break;
+				}
+			}
+			stats.processed++;
+		}
+
+		// ===================== ГЛАВНЫЙ ЦИКЛ =====================
+		let lastFrame = performance.now();
+
+		function frame(now) {
+			requestAnimationFrame(frame);
+			const dtReal = clamp((now - lastFrame) / 1000, 0, 0.1);
+			lastFrame = now;
+			if (!paused) {
+				const target = simTime + dtReal * SIM_HOURS_PER_SEC * speedMult;
+				let lastEventT = simTime;
+				let processed = 0;
+				let ev;
+				while ((ev = queue.peek()) && ev.t <= target && processed < EVENTS_PER_FRAME_CAP) {
+					queue.pop();
+					handleEvent(ev);
+					lastEventT = ev.t;
+					processed++;
+				}
+				simTime = processed >= EVENTS_PER_FRAME_CAP ? lastEventT : target;
+			}
+			draw();
+			maybeUpdateUI(now);
+		}
+
+		// ===================== РЕНДЕР =====================
+		const canvas = document.getElementById('sea');
+		const ctx = canvas.getContext('2d');
+		let W = 0, H = 0, DPR = 1;
+
+		function resize() {
+			const r = canvas.parentElement.getBoundingClientRect();
+			DPR = window.devicePixelRatio || 1;
+			W = r.width;
+			H = r.height;
+			canvas.width = Math.max(1, Math.round(W * DPR));
+			canvas.height = Math.max(1, Math.round(H * DPR));
+		}
+		window.addEventListener('resize', resize);
+
+		function worldToScreen(x, y) {
+			const s = Math.min(W / WORLD_W, H / WORLD_H);
+			const ox = (W - WORLD_W * s) / 2;
+			const oy = (H - WORLD_H * s) / 2;
+			return [ox + x * s, oy + y * s, s];
+		}
+
+		function shipPos(s) {
+			if (s.state === 'sailing' && s.route) {
+				const r = s.route;
+				const u = clamp((simTime - r.departT) / (r.arriveT - r.departT), 0, 1);
+				const a = PORTS[r.from];
+				const b = PORTS[r.to];
+				return { x: lerp(a.x, b.x, u), y: lerp(a.y, b.y, u), ang: Math.atan2(b.y - a.y, b.x - a.x) };
+			}
+			const p = PORTS[s.portId];
+			const ang = -Math.PI / 2 + (s.dockSlot - 3.5) * 0.32;
+			return { x: p.x + Math.cos(ang) * 26, y: p.y + Math.sin(ang) * 26, ang };
+		}
+
+		function daylight(t) {
+			const h = t % 24;
+			const rise = 5.5, set = 21;
+			if (h < rise || h > set + 1.5) return 0;
+			if (h < rise + 1.5) return (h - rise) / 1.5;
+			if (h > set) return 1 - (h - set) / 1.5;
+			return 1;
+		}
+
+		function draw() {
+			ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+			const g = ctx.createLinearGradient(0, 0, 0, H);
+			g.addColorStop(0, '#0d2036');
+			g.addColorStop(1, '#0a1626');
+			ctx.fillStyle = g;
+			ctx.fillRect(0, 0, W, H);
+
+			// сетка
+			ctx.strokeStyle = 'rgba(120,160,220,0.05)';
+			ctx.lineWidth = 1;
+			for (let x = 0; x <= WORLD_W; x += 100) {
+				const [x1, y1] = worldToScreen(x, 0);
+				const [x2, y2] = worldToScreen(x, WORLD_H);
+				ctx.beginPath();
+				ctx.moveTo(x1, y1);
+				ctx.lineTo(x2, y2);
+				ctx.stroke();
+			}
+			for (let y = 0; y <= WORLD_H; y += 100) {
+				const [x1, y1] = worldToScreen(0, y);
+				const [x2, y2] = worldToScreen(WORLD_W, y);
+				ctx.beginPath();
+				ctx.moveTo(x1, y1);
+				ctx.lineTo(x2, y2);
+				ctx.stroke();
+			}
+
+			// активные маршруты
+			ctx.setLineDash([6, 6]);
+			ctx.strokeStyle = 'rgba(130,180,255,0.14)';
+			for (const s of ships) {
+				if (s.state !== 'sailing' || !s.route) continue;
+				const a = PORTS[s.route.from];
+				const b = PORTS[s.route.to];
+				const [x1, y1] = worldToScreen(a.x, a.y);
+				const [x2, y2] = worldToScreen(b.x, b.y);
+				ctx.beginPath();
+				ctx.moveTo(x1, y1);
+				ctx.lineTo(x2, y2);
+				ctx.stroke();
+			}
+			ctx.setLineDash([]);
+
+			// порты
+			for (const p of PORTS) {
+				const [x, y, s] = worldToScreen(p.x, p.y);
+				const R = 12 * s;
+				ctx.beginPath();
+				ctx.arc(x, y, R, 0, Math.PI * 2);
+				ctx.fillStyle = '#16283f';
+				ctx.fill();
+				ctx.lineWidth = 2;
+				ctx.strokeStyle = '#3f6ea8';
+				ctx.stroke();
+				ctx.fillStyle = '#cfe0f5';
+				ctx.font = Math.max(10, 11 * s) + 'px system-ui, sans-serif';
+				ctx.textAlign = 'center';
+				ctx.fillText(p.name, x, y + R + 14 * s);
+				let by = y + R + 20 * s;
+				for (const k of CARGO_KEYS) {
+					const st = p.stock ? p.stock[k] : 0;
+					if (st <= 0) continue;
+					const w = clamp(st / 220, 0.05, 1) * 46 * s;
+					ctx.fillStyle = CARGO[k].color;
+					ctx.fillRect(x - 23 * s, by, w, 2.5 * s);
+					by += 5 * s;
+				}
+			}
+
+			// корабли
+			for (const s of ships) {
+				const pos = shipPos(s);
+				const [x, y, sc] = worldToScreen(pos.x, pos.y);
+				const size = 11 * sc;
+				ctx.save();
+				ctx.translate(x, y);
+				ctx.rotate(pos.ang);
+				ctx.beginPath();
+				ctx.moveTo(size, 0);
+				ctx.lineTo(-size * 0.75, size * 0.6);
+				ctx.lineTo(-size * 0.45, 0);
+				ctx.lineTo(-size * 0.75, -size * 0.6);
+				ctx.closePath();
+				ctx.fillStyle = s.cargo ? CARGO[s.cargo.type].color : '#8fa7c4';
+				ctx.fill();
+				ctx.restore();
+				if (s.cargo && sc > 0.5) {
+					ctx.fillStyle = 'rgba(215,227,244,0.85)';
+					ctx.font = Math.max(9, 9 * sc) + 'px ui-monospace, monospace';
+					ctx.textAlign = 'center';
+					ctx.fillText(String(s.cargo.amount), x, y - 10 * sc);
+				}
+			}
+
+			// кольца прибытия
+			const nowMs = performance.now();
+			for (let i = fx.length - 1; i >= 0; i--) {
+				const f = fx[i];
+				const age = (nowMs - f.t0) / 900;
+				if (age >= 1) {
+					fx.splice(i, 1);
+					continue;
+				}
+				const [x, y, s] = worldToScreen(f.x, f.y);
+				ctx.beginPath();
+				ctx.arc(x, y, age * 42 * s, 0, Math.PI * 2);
+				ctx.strokeStyle = 'rgba(76,194,255,' + ((1 - age) * 0.7).toFixed(3) + ')';
+				ctx.lineWidth = 2;
+				ctx.stroke();
+			}
+
+			// ночь
+			const night = 1 - daylight(simTime);
+			if (night > 0.01) {
+				ctx.fillStyle = 'rgba(8,18,48,' + (night * 0.38).toFixed(3) + ')';
+				ctx.fillRect(0, 0, W, H);
+			}
+		}
+
+		// ===================== UI =====================
+		const logBox = document.getElementById('logBox');
+
+		function logEvent(t, type, msg) {
+			if (speedMult > 150 && Math.random() < 0.7) return; // семплирование на экстремальных скоростях
+			const div = document.createElement('div');
+			div.className = 'row';
+			div.innerHTML = '<span class="t">' + fmtTime(t) + '</span><span class="tag ' + type + '">' + (TAGS[type] || '') + '</span><span class="m">' + msg + '</span>';
+			logBox.prepend(div);
+			while (logBox.children.length > 60) logBox.lastChild.remove();
+		}
+
+		function eventShort(e) {
+			if (e.type === 'produce') return 'порты: производство грузов';
+			if (e.type === 'spawn') return 'новый корабль';
+			const s = e.ship;
+			if (!s) return '';
+			if (e.type === 'depart') return '«' + s.name + '» → ' + (PORTS[s.destId] ? PORTS[s.destId].name : '?');
+			if (e.type === 'arrive' && s.route) return '«' + s.name + '» в ' + PORTS[s.route.to].name;
+			if (e.type === 'unload') return '«' + s.name + '» → склад ' + PORTS[s.portId].name;
+			if (e.type === 'load') return '«' + s.name + '» в ' + PORTS[s.portId].name;
+			return '';
+		}
+
+		let lastUI = 0;
+		function maybeUpdateUI(now) {
+			if (now - lastUI < 160) return;
+			lastUI = now;
+			document.getElementById('clock').textContent = fmtTime(simTime);
+			document.getElementById('dayLabel').textContent = fmtDay(simTime);
+			document.getElementById('stShips').textContent = ships.length + ' / ' + MAX_SHIPS;
+			document.getElementById('stEvents').textContent = stats.processed.toLocaleString('ru-RU');
+			document.getElementById('stHeap').textContent = queue.size.toLocaleString('ru-RU');
+			document.getElementById('stOps').textContent = queue.pushes.toLocaleString('ru-RU') + ' / ' + queue.pops.toLocaleString('ru-RU');
+			document.getElementById('stTrips').textContent = stats.trips.toLocaleString('ru-RU');
+			document.getElementById('stCargo').textContent = stats.delivered.toLocaleString('ru-RU') + ' ед.';
+			const qb = document.getElementById('queueBox');
+			const up = queue.upcoming(12);
+			qb.innerHTML = up.map((e) =>
+				'<div class="row"><span class="t">' + fmtTime(e.t) + '</span><span class="tag ' + e.type + '">' + (TAGS[e.type] || '') + '</span><span class="m">' + eventShort(e) + '</span></div>'
+			).join('') || '<div class="row"><span class="m">— очередь пуста —</span></div>';
+		}
+
+		const speedInput = document.getElementById('speed');
+		const speedLabel = document.getElementById('speedLabel');
+		function speedFromSlider(v) {
+			return Math.round(Math.pow(10, v / 100 * 3)); // ×1 … ×1000
+		}
+		function updateSpeedLabel() {
+			const hps = SIM_HOURS_PER_SEC * speedMult;
+			const per = hps >= 1 ? hps.toFixed(1) + ' ч' : (hps * 60).toFixed(0) + ' мин';
+			speedLabel.innerHTML = '<b>×' + speedMult + '</b><br>1 с ≈ ' + per;
+		}
+		speedInput.addEventListener('input', () => {
+			speedMult = speedFromSlider(+speedInput.value);
+			updateSpeedLabel();
+		});
+
+		const pauseBtn = document.getElementById('pauseBtn');
+		pauseBtn.addEventListener('click', () => {
+			paused = !paused;
+			pauseBtn.textContent = paused ? 'Продолжить' : 'Пауза';
+		});
+		document.getElementById('addShipBtn').addEventListener('click', () => spawnShip(simTime));
+		document.getElementById('resetBtn').addEventListener('click', () => {
+			logBox.innerHTML = '';
+			resetWorld();
+		});
+
+		document.getElementById('legend').innerHTML = CARGO_KEYS.map((k) =>
+			'<span><i style="background:' + CARGO[k].color + '"></i>' + CARGO[k].name + '</span>'
+		).join('') + '<span><i style="background:#8fa7c4"></i>порожний</span>';
+
+		// ===================== СТАРТ =====================
+		resize();
+		resetWorld();
+		updateSpeedLabel();
+		requestAnimationFrame(frame);
+	</script>
+</body>
+</html>

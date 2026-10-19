@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sea Trade Event Queue</title>
+<style>
+html,body{margin:0;height:100%;background:#0b1d2a;color:#e6f1f7;font-family:system-ui,sans-serif}
+#app{display:flex;flex-direction:column;height:100%}
+#bar{padding:8px 12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:#0f2a3d}
+#bar label{font-size:12px}
+canvas{flex:1;display:block;background:#0b1d2a}
+#info{padding:6px 12px;font-size:12px;background:#0f2a3d;min-height:18px}
+button{background:#2dd4bf;border:none;border-radius:4px;padding:4px 10px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <label>speed <input id="speed" type="range" min="0" max="3" step="0.01" value="1"><span id="speedv">10.0</span>x</label>
+    <label>ships <input id="nships" type="range" min="4" max="40" step="1" value="12"><span id="nshipsv">12</span></label>
+    <button id="reset">reset</button>
+    <span id="stats"></span>
+  </div>
+  <canvas id="c"></canvas>
+  <div id="info"></div>
+</div>
+<script src="js/queue.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
