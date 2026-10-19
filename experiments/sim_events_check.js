@@ -18,6 +18,14 @@ function countArrivals(sim, ship) {
 	return count;
 }
 
+function countKind(sim, kind, ref) {
+	let count = 0;
+	for (let i = 0; i < sim.events.size; i++) {
+		if (sim.events.kind[i] === kind && sim.events.ref[i] === ref) count += 1;
+	}
+	return count;
+}
+
 function checkInvariants(sim) {
 	assert(sim.events.peekTime() >= sim.t, 'no event may sit in the past at t=' + sim.t);
 	for (let ship = 0; ship < Sim.SHIPS; ship++) {
@@ -25,6 +33,13 @@ function checkInvariants(sim) {
 		assert.strictEqual(countArrivals(sim, ship), 1, 'living ship ' + ship + ' must have one arrival');
 		assert(sim.shipArrive[ship] >= sim.t, 'ship ' + ship + ' arrival must be in the future');
 	}
+	// one self-rescheduling consumption tick per port, never two
+	for (let port = 0; port < Sim.PORTS; port++) {
+		assert.strictEqual(countKind(sim, Sim.KIND_CONSUME, port), 1, 'port ' + port + ' must have one consume tick');
+	}
+	assert(sim.logCount <= Sim.LOG, 'event log ring must stay bounded');
+	// the cap gates spawns only: a lowered cap drains the fleet by retirement
+	assert(sim.shipCount <= Sim.SHIPS, 'fleet must stay inside the slot array');
 }
 
 const sim = new Sim(5);
@@ -55,5 +70,24 @@ for (let minute = 0; minute < 3000; minute += 7) {
 	checkInvariants(sim);
 }
 assert(sim.spawned > shipped, 'retirements must keep being replaced');
+assert(sim.consumed > 0, 'ports must consume part of their stock');
 
-console.log('sim_events_check: ok, deferred click served after ' + waited + ' min, events=' + sim.processed);
+// lowering the cap stops new spawns; the fleet drains as ships retire
+sim.setFleet(4);
+let peak = sim.shipCount;
+for (let minute = 0; minute < 4000; minute += 11) {
+	sim.step(11);
+	assert(sim.shipCount <= peak, 'lowering the cap must not spawn more ships, got ' + sim.shipCount);
+	peak = Math.max(peak, sim.shipCount);
+	checkInvariants(sim);
+}
+assert(sim.shipCount <= 4, 'the fleet must drain to the lowered cap, got ' + sim.shipCount);
+sim.setFleet(Sim.SHIPS);
+for (let minute = 0; minute < 2000; minute += 11) {
+	sim.step(11);
+	checkInvariants(sim);
+}
+assert(sim.shipCount > 4, 'raising the cap must let the queued dispatch requests through');
+
+console.log('sim_events_check: ok, deferred click served after ' + waited + ' min, events=' + sim.processed +
+	', consumed=' + Math.round(sim.consumed));

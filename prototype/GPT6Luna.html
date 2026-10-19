@@ -83,6 +83,11 @@ const mapCanvas = document.querySelector("#map");
 const mapCtx = mapCanvas.getContext("2d");
 const chartCanvas = document.querySelector("#stockChart");
 const chartCtx = chartCanvas.getContext("2d");
+// cached once: the frame loop must not query the dom every frame
+const speedInput = document.querySelector("#speed");
+const speedLabelEl = document.querySelector("#speedLabel");
+const clockEl = document.querySelector("#clock");
+const logEl = document.querySelector("#log");
 
 const ports = [
   { name: "Северный порт", x: 130, y: 100, stock: { зерно: 30, дерево: 8, железо: 5 } },
@@ -173,11 +178,14 @@ function formatTime(hours) {
   return `День ${day}, ${String(hour).padStart(2, "0")}:00`;
 }
 
+const LOG_ROWS = 120;
+
 function log(text, eventTime = now) {
-  const logElement = document.querySelector("#log");
   const line = document.createElement("div");
   line.textContent = `${formatTime(eventTime)} — ${text}`;
-  logElement.prepend(line);
+  logEl.prepend(line);
+  // two rows per arrival at x100: an untrimmed log grows without bound
+  while (logEl.children.length > LOG_ROWS) logEl.lastChild.remove();
 }
 
 function calculateTravelTime(from, to) {
@@ -404,8 +412,8 @@ function drawStockChart() {
 }
 
 function update() {
-  const speed = Number(document.querySelector("#speed").value);
-  document.querySelector("#speedLabel").textContent = `${speed}×`;
+  const speed = Number(speedInput.value);
+  speedLabelEl.textContent = `${speed}×`;
 
   const realSeconds = Math.min(
     (performance.now() - lastFrame) / 1000,
@@ -422,14 +430,19 @@ function update() {
   // Обработчик может добавить новое событие — цикл проверит и его тоже.
   let event;
   let processed = 0;
+  let lastEventT = now;
 
   while ((event = queue.peek()) && event.time <= now && processed < 10000) {
     queue.pop();
+    lastEventT = event.time;
     handleArrival(event.ship, event.time);
     processed++;
   }
 
-  document.querySelector("#clock").textContent = formatTime(now);
+  // a capped frame holds the clock at the last event instead of skipping it
+  if (processed >= 10000) now = lastEventT;
+
+  clockEl.textContent = formatTime(now);
 
   drawMap();
   drawStockChart();
@@ -442,8 +455,8 @@ document.querySelector("#toggle").addEventListener("click", event => {
   event.currentTarget.textContent = paused ? "Продолжить" : "Пауза";
 });
 
-document.querySelector("#speed").addEventListener("input", event => {
-  document.querySelector("#speedLabel").textContent = `${event.target.value}×`;
+speedInput.addEventListener("input", event => {
+  speedLabelEl.textContent = `${event.target.value}×`;
 });
 
 // Запустить первые рейсы.

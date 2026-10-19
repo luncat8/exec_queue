@@ -1,0 +1,22 @@
+# queue A/B, node v22.22.3, best of 3 runs
+
+bulk 200k random times, then drain all
+impl                            ms       ops/s     rel  checksum
+A2026 typed arrays           40.12   9,970,567   x1.00  1032370118
+Beam1 objects               122.06   3,277,120   x3.04  1032370118
+GLM5.3 objects + fifo        84.83   4,715,470   x2.11  1032370118
+GPT6Luna objects             83.71   4,778,598   x2.09  1032370118
+
+steady depth 64, 400k clock steps (sim shape)
+impl                            ms       ops/s     rel  checksum
+A2026 typed arrays           35.86  22,306,490   x1.00  -629141440
+Beam1 objects                51.57  15,513,933   x1.44  -629141440
+GLM5.3 objects + fifo        49.84  16,050,116   x1.39  -629141440
+GPT6Luna objects             45.37  17,632,388   x1.27  -629141440
+
+burst depth 2000, 150 jumps (max speed)
+impl                            ms       ops/s     rel  checksum
+A2026 typed arrays           34.82  17,231,239   x1.00  -1059527203
+Beam1 objects                59.74  10,043,596   x1.72  -1059527203
+GLM5.3 objects + fifo        56.92  10,541,581   x1.63  -1059527203
+GPT6Luna objects             49.87  12,030,282   x1.43  -1059527203

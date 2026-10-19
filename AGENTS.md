@@ -46,6 +46,10 @@ findings-pitfalls-skills.md - notes and pitfalls for LLM agents. write here if f
 
 archive/ - for implemented plans
 
+- root holds the best implementation; other builds stay in their own folder
+  (A2026/, Beam1/, single-file demos) and must keep working. compare before
+  borrowing: see archive/0.2.0-comparison.md.
+
 experiments/ - measurement scripts (node), not loaded by the page.
 experiments/logs/ - without long formatting, keep only useful data that helpful in future to compare and detect improvement vs regression;
 

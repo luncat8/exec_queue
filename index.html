@@ -13,19 +13,25 @@
 		<div id="clock">day 1 · 00:00</div>
 		<div class="stat"><span>queue</span><b id="qlen">0</b></div>
 		<div class="stat"><span>events</span><b id="events">0</b></div>
-		<div class="stat"><span>ships</span><b id="ships">0</b></div>
+		<div class="stat"><span>fleet</span><b id="ships">0</b></div>
 		<div class="stat"><span>delivered</span><b id="delivered">0</b></div>
+		<div class="stat"><span>consumed</span><b id="consumed">0</b></div>
 		<div class="stat"><span>next event</span><b id="next">—</b></div>
 		<div id="legend">
-			<span class="good r">r</span>
-			<span class="good g">g</span>
-			<span class="good b">b</span>
+			<span class="good r">grain</span>
+			<span class="good g">timber</span>
+			<span class="good b">iron</span>
 		</div>
 		<div id="hint">click a port to dispatch<br>space pause · j step 30 min</div>
 		<div id="timeline">
 			<div class="caption"><span>time queue</span><span>next 20 min</span></div>
 			<canvas id="qtl"></canvas>
+			<div class="caption"><span>arrival</span><span>dispatch · consume</span></div>
 		</div>
+	</div>
+	<div id="log">
+		<div class="caption"><span>event log</span><span id="logRate"></span></div>
+		<div id="logBody"></div>
 	</div>
 	<div id="controls">
 		<button id="pause" title="space">pause</button>
@@ -35,6 +41,8 @@
 		</div>
 		<input id="speed" type="range" min="0" max="1000" value="593">
 		<output id="speedLabel">×60</output>
+		<input id="fleet" type="range" min="4" max="30" value="30" title="fleet cap: ships wait in the queue until a slot frees">
+		<output id="fleetLabel">30</output>
 		<button id="reset">reset</button>
 	</div>
 </div>

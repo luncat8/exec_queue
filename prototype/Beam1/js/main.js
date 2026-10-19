@@ -13,13 +13,22 @@ let q = PriorityQueue();
 let simTime = 0;
 let speed = 10;
 let lastReal = performance.now();
+let uiAt = -Infinity;
 let processed = 0;
 const UNLOAD = 2;
 const SHIP_SPEED = 40;
 
+/* canvas backing store follows devicePixelRatio; drawing stays in css px. */
+let viewW = 800;
+let viewH = 600;
+
 function resize() {
-	canvas.width = canvas.clientWidth || 800;
-	canvas.height = canvas.clientHeight || 600;
+	const dpr = window.devicePixelRatio || 1;
+	viewW = canvas.clientWidth || 800;
+	viewH = canvas.clientHeight || 600;
+	canvas.width = Math.round(viewW * dpr);
+	canvas.height = Math.round(viewH * dpr);
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function dist(ax, ay, bx, by) {
@@ -32,9 +41,10 @@ function tryDepart(ship, time) {
 	if (ship.state !== 'idle') return false;
 	const port = ports[ship.port];
 	if (port.goods <= 0) {
+		/* an empty port is normal: back off instead of polling every minute */
 		if (!ship.retryScheduled) {
 			ship.retryScheduled = true;
-			q.push({ time: time + 1, type: 'retry', ship: ship });
+			q.push({ time: time + 5 + Math.random() * 25, type: 'retry', ship: ship });
 		}
 		return false;
 	}
@@ -90,15 +100,18 @@ function processEvent(ev) {
 
 function step(dt) {
 	const target = simTime + dt * speed;
+	let lastEvent = simTime;
 	let guard = 0;
 	while (q.size() > 0 && q.peek().time <= target && guard < 5000) {
 		const ev = q.pop();
 		simTime = ev.time;
+		lastEvent = ev.time;
 		processEvent(ev);
 		processed++;
 		guard++;
 	}
-	simTime = target;
+	/* a capped frame holds the clock at the last event instead of skipping it */
+	simTime = guard >= 5000 ? lastEvent : target;
 }
 
 function updatePositions() {
@@ -122,8 +135,8 @@ function updatePositions() {
 }
 
 function render() {
-	const w = canvas.width;
-	const h = canvas.height;
+	const w = viewW;
+	const h = viewH;
 	ctx.clearRect(0, 0, w, h);
 	ctx.fillStyle = '#0b1d2a';
 	ctx.fillRect(0, 0, w, h);
@@ -167,7 +180,9 @@ function render() {
 	}
 }
 
-function updateUI() {
+function updateUI(now) {
+	if (now - uiAt < 100) return;
+	uiAt = now;
 	speedV.textContent = speed >= 100 ? speed.toFixed(0) : speed.toFixed(1);
 	nshipsV.textContent = nshipsSlider.value;
 	statsEl.textContent = 'time ' + simTime.toFixed(1) + '  queue ' + q.size() + '  processed ' + processed + '  ships ' + ships.length;
@@ -185,8 +200,8 @@ function init(n) {
 	q = PriorityQueue();
 	simTime = 0;
 	processed = 0;
-	const w = canvas.width;
-	const h = canvas.height;
+	const w = viewW;
+	const h = viewH;
 	const cx = w / 2;
 	const cy = h / 2;
 	const r = Math.min(w, h) * 0.35;
@@ -210,7 +225,7 @@ function frame(now) {
 	if (dt > 0) step(Math.min(dt, 0.1));
 	updatePositions();
 	render();
-	updateUI();
+	updateUI(now);
 	requestAnimationFrame(frame);
 }
 
@@ -219,6 +234,11 @@ speedSlider.addEventListener('input', function () {
 });
 nshipsSlider.addEventListener('input', function () {
 	nshipsV.textContent = nshipsSlider.value;
+});
+/* the fleet is rebuilt from a plain array, so a new size needs a reseed */
+nshipsSlider.addEventListener('change', function () {
+	resize();
+	init(parseInt(nshipsSlider.value, 10));
 });
 document.getElementById('reset').addEventListener('click', function () {
 	resize();

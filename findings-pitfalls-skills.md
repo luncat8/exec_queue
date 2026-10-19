@@ -33,3 +33,36 @@
 - Render offscreen under node with `@napi-rs/canvas` (installed outside the repo)
   to check layout, colors and DPR handling without a browser; feed it a stub DOM
   and an rAF queue.
+
+- Hole sift-up must compare the event being sifted, not `h[i]`: after
+  `h[i] = h[p]` the slot holds the parent, and comparing it stops the sift early
+  and breaks heap order without any error. A benchmark that asserts drain order
+  catches this immediately; a demo just looks slightly wrong.
+
+- Per-event DOM is the hidden cost in a canvas demo. One `div` + `innerHTML`
+  per event reached 158,000 rows in two minutes at ×100; throttling the log to
+  one row per 90 ms (or a preallocated row pool fed from a ring in the sim)
+  removes it. Same for `document.querySelector` inside the frame loop.
+
+- Give the backing store the device pixels and draw in CSS pixels
+  (`canvas.width = css * dpr`, `ctx.setTransform(dpr, …)`). Copying CSS size
+  into `canvas.width` halves the resolution on retina; passing explicit width to
+  `drawImage` on a cached backdrop shears it once `dpr > 1`.
+
+- A capped drain must hold the clock at the last event it processed, not advance
+  to the frame target — otherwise unprocessed events sit in the past.
+
+- Production without a sink piles every bin at the cap and the bars stop moving
+  (82.9% average fill, 0.5% of samples with an empty bin). A consumption tick
+  per port as a real event brings it to ~53% fill with visible scarcity, and it
+  gives the queue a third kind to demonstrate.
+
+- Headless audit of a foreign demo: stub `document`, `performance.now`, a rAF
+  queue and a canvas Proxy, then evaluate the inline script with `vm` in one
+  context — top-level `let`/`const` stay reachable from later scripts in the
+  same context, so you can inspect its internal state directly.
+
+- Rendering a canvas app under node: `@napi-rs/canvas` plus a stub DOM works, but
+  the stub must keep one context object for the whole run (resizing must not
+  hand the page a new context), and the offscreen backdrop must be allocated
+  larger than the page canvas or `drawImage` leaves unpainted bands.

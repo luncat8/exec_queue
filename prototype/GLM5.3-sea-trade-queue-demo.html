@@ -218,17 +218,16 @@
 			push(evt) {
 				const h = this.heap;
 				evt.seq = this.seq++;
+				let i = h.length;
 				h.push(evt);
-				let i = h.length - 1;
+				/* hole sift-up: the parent moves down, so compare against evt */
 				while (i > 0) {
 					const p = (i - 1) >> 1;
-					if (EventQueue.less(h[i], h[p])) {
-						[h[i], h[p]] = [h[p], h[i]];
-						i = p;
-					} else {
-						break;
-					}
+					if (!EventQueue.less(evt, h[p])) break;
+					h[i] = h[p];
+					i = p;
 				}
+				h[i] = evt;
 				this.pushes++;
 			}
 			peek() {
@@ -240,18 +239,18 @@
 				const top = h[0];
 				const last = h.pop();
 				if (h.length) {
-					h[0] = last;
+					const n = h.length;
 					let i = 0;
 					for (;;) {
 						const l = i * 2 + 1;
+						if (l >= n) break;
 						const r = l + 1;
-						let m = i;
-						if (l < h.length && EventQueue.less(h[l], h[m])) m = l;
-						if (r < h.length && EventQueue.less(h[r], h[m])) m = r;
-						if (m === i) break;
-						[h[i], h[m]] = [h[m], h[i]];
-						i = m;
+						const c = r < n && EventQueue.less(h[r], h[l]) ? r : l;
+						if (!EventQueue.less(h[c], last)) break;
+						h[i] = h[c];
+						i = c;
 					}
+					h[i] = last;
 				}
 				this.pops++;
 				return top;
@@ -295,6 +294,7 @@
 		};
 
 		const MAX_SHIPS = 26;
+		const STOCK_MAX = 220;
 		const SIM_HOURS_PER_SEC = 0.2;      // 1 реальная секунда при ×1 = 12 сим-минут
 		const EVENTS_PER_FRAME_CAP = 30000; // защита от «шторма» событий при ×1000
 		const WORLD_W = 1000;
@@ -360,7 +360,7 @@
 				case 'produce': {
 					for (const p of PORTS) {
 						for (const k of p.makes) {
-							if (p.stock[k] < 220) p.stock[k] = Math.min(220, p.stock[k] + randInt(2, 5));
+							if (p.stock[k] < STOCK_MAX) p.stock[k] = Math.min(STOCK_MAX, p.stock[k] + randInt(2, 5));
 						}
 					}
 					schedule(e.t + 0.5, 'produce', null);
@@ -397,7 +397,7 @@
 				case 'unload': {
 					const p = PORTS[s.portId];
 					if (s.cargo) {
-						p.stock[s.cargo.type] = Math.min(260, p.stock[s.cargo.type] + s.cargo.amount);
+						p.stock[s.cargo.type] = Math.min(STOCK_MAX, p.stock[s.cargo.type] + s.cargo.amount);
 						stats.delivered += s.cargo.amount;
 						logEvent(e.t, 'unload', '«' + s.name + '» разгрузился в ' + p.name + ': +' + s.cargo.amount + ' ' + CARGO[s.cargo.type].name);
 						s.cargo = null;
@@ -569,7 +569,7 @@
 				for (const k of CARGO_KEYS) {
 					const st = p.stock ? p.stock[k] : 0;
 					if (st <= 0) continue;
-					const w = clamp(st / 220, 0.05, 1) * 46 * s;
+					const w = clamp(st / STOCK_MAX, 0.05, 1) * 46 * s;
 					ctx.fillStyle = CARGO[k].color;
 					ctx.fillRect(x - 23 * s, by, w, 2.5 * s);
 					by += 5 * s;
@@ -629,8 +629,11 @@
 		// ===================== UI =====================
 		const logBox = document.getElementById('logBox');
 
+		let lastLogMs = 0;
 		function logEvent(t, type, msg) {
-			if (speedMult > 150 && Math.random() < 0.7) return; // семплирование на экстремальных скоростях
+				const nowMs = performance.now();
+				if (nowMs - lastLogMs < 90 && stats.processed > 8) return; // скачок: тысячи событий за кадр
+				lastLogMs = nowMs;
 			const div = document.createElement('div');
 			div.className = 'row';
 			div.innerHTML = '<span class="t">' + fmtTime(t) + '</span><span class="tag ' + type + '">' + (TAGS[type] || '') + '</span><span class="m">' + msg + '</span>';

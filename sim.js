@@ -1,9 +1,14 @@
 /*
  * Sea-trade simulation driven entirely by the discrete-event queue.
- * Every ship has exactly one future arrival event; ports schedule dispatch
- * events for new ships. Handlers use the event time (not the frame clock)
- * as the new departure time, so a clock jump over several voyages stays
- * consistent.
+ *
+ * Three event kinds share one queue:
+ *   KIND_ARRIVE   ref = ship slot   - a voyage finished
+ *   KIND_DISPATCH ref = port        - a ship may enter the fleet
+ *   KIND_CONSUME  ref = port        - the port eats part of its stock
+ *
+ * Every ship holds exactly one future arrival. Handlers schedule from the
+ * event time, never from the frame clock, so a clock jump over several
+ * voyages stays consistent.
  */
 (function (root) {
 	'use strict';
@@ -15,20 +20,26 @@
 	const PORTS = 6;
 	const GOODS = 3;
 	const SHIPS = 30;
+	const LOG = 64;
 	const NO_GOOD = 255;
 	const NO_PORT = 255;
 	const STOCK_MAX = 120;
 	const HOLD_MAX = 26;
-	const SHIP_SPEED = 70; // world px per sim minute
+	const SHIP_SPEED = 70; // world px per sim minute at speed 1.0
 	const RETIRE_TRIPS = 6;
 	const RETIRE_CHANCE = 0.12;
+	const CONSUME_MINUTES = 10;
+	const SINK_SHARE = 0.92; // fraction of production the port itself eats
 	const KIND_DISPATCH = 0;
 	const KIND_ARRIVE = 1;
+	const KIND_CONSUME = 2;
 
 	const WORLD_W = 1600;
 	const WORLD_H = 1000;
 	const PORT_X = [250, 660, 1260, 1400, 880, 360];
 	const PORT_Y = [300, 130, 240, 620, 800, 720];
+	const PORT_NAMES = ['Northport', 'Saltbay', 'Ironhook', 'Farreach', 'Lowmarsh', 'Highcross'];
+	const GOOD_NAMES = ['grain', 'timber', 'iron'];
 
 	function seedRandom(seed) {
 		let a = seed >>> 0;
@@ -50,24 +61,45 @@
 		this.spawned = 0;
 		this.retired = 0;
 		this.delivered = 0;
+		this.consumed = 0;
 		this.shipCount = 0;
+		this.fleetMax = SHIPS;
 		this.queuePeak = 0;
 		this.lastPort = 0;
 		this.lastGood = NO_GOOD;
 		this.stock = new Float64Array(PORTS * GOODS);
 		this.production = new Float64Array(PORTS * GOODS);
+		this.sink = new Float64Array(PORTS * GOODS);
 		this.shipAlive = new Uint8Array(SHIPS);
 		this.shipFrom = new Uint8Array(SHIPS);
 		this.shipTo = new Uint8Array(SHIPS);
 		this.shipDepart = new Float64Array(SHIPS);
 		this.shipArrive = new Float64Array(SHIPS);
 		this.shipHold = new Float64Array(SHIPS);
+		this.shipLimit = new Float64Array(SHIPS);
+		this.shipSpeed = new Float64Array(SHIPS);
 		this.shipCargo = new Uint8Array(SHIPS);
 		this.shipTrips = new Uint16Array(SHIPS);
 		this.shipGen = new Uint32Array(SHIPS);
+		/* newest first: the gui reads this ring instead of logging in the sim */
+		this.logTime = new Float64Array(LOG);
+		this.logKind = new Uint8Array(LOG);
+		this.logRef = new Uint16Array(LOG);
+		this.logGood = new Uint8Array(LOG);
+		this.logAmount = new Float64Array(LOG);
+		this.logHead = 0;
+		this.logCount = 0;
 		for (let i = 0; i < PORTS * GOODS; i++) {
 			this.stock[i] = 40 + this.rand() * 50;
 			this.production[i] = 1.5 + this.rand() * 2;
+			this.sink[i] = this.production[i] * SINK_SHARE;
+		}
+		for (let i = 0; i < SHIPS; i++) {
+			this.shipLimit[i] = HOLD_MAX * (0.7 + this.rand() * 0.6);
+			this.shipSpeed[i] = SHIP_SPEED * (0.75 + this.rand() * 0.5);
+		}
+		for (let p = 0; p < PORTS; p++) {
+			this.events.push(this.rand() * CONSUME_MINUTES, KIND_CONSUME, p);
 		}
 		for (let i = 0; i < SHIPS; i++) {
 			const delay = i < 10 ? 0 : (i - 10) * 3 + this.rand() * 6;
@@ -87,17 +119,50 @@
 		}
 	};
 
+	Sim.prototype.logEvent = function (time, kind, port, good, amount) {
+		const slot = this.logHead;
+		this.logTime[slot] = time;
+		this.logKind[slot] = kind;
+		this.logRef[slot] = port;
+		this.logGood[slot] = good;
+		this.logAmount[slot] = amount;
+		this.logHead = (slot + 1) % LOG;
+		if (this.logCount < LOG) this.logCount += 1;
+	};
+
 	Sim.prototype.handleEvent = function (time, kind, ref) {
 		this.produce(time - this.t);
 		this.t = time;
 		this.processed += 1;
 		if (kind === KIND_ARRIVE) this.arrive(time, ref);
+		else if (kind === KIND_CONSUME) this.consume(time, ref);
 		else this.dispatch(time, ref);
+	};
+
+	/* the sink that makes supply a flow instead of a pile at STOCK_MAX */
+	Sim.prototype.consume = function (time, port) {
+		const base = port * GOODS;
+		let eaten = 0;
+		for (let g = 0; g < GOODS; g++) {
+			const bin = base + g;
+			const want = this.sink[bin] * CONSUME_MINUTES;
+			const left = this.stock[bin] - want;
+			if (left > 0) {
+				this.stock[bin] = left;
+				eaten += want;
+				continue;
+			}
+			eaten += this.stock[bin];
+			this.stock[bin] = 0;
+		}
+		this.consumed += eaten;
+		this.events.push(time + CONSUME_MINUTES, KIND_CONSUME, port);
+		if (eaten > 0) this.logEvent(time, KIND_CONSUME, port, NO_GOOD, eaten);
 	};
 
 	Sim.prototype.dispatch = function (time, port) {
 		const requested = port !== NO_PORT;
-		if (this.shipCount >= SHIPS) {
+		if (this.shipCount >= this.fleetMax) {
 			// a full fleet defers the request instead of dropping it
 			this.events.push(time + 10 + this.rand() * 40, KIND_DISPATCH, port);
 			return;
@@ -116,20 +181,23 @@
 		this.shipDepart[ship] = time;
 		this.shipArrive[ship] = time;
 		this.spawned += 1;
+		this.logEvent(time, KIND_DISPATCH, home, NO_GOOD, 0);
 		this.load(ship, home, time);
 	};
 
 	Sim.prototype.arrive = function (time, ship) {
 		const port = this.shipTo[ship];
 		const cargo = this.shipCargo[ship];
+		const hold = this.shipHold[ship];
 		if (cargo !== NO_GOOD) {
 			const slot = port * GOODS + cargo;
-			const stock = this.stock[slot] + this.shipHold[ship];
+			const stock = this.stock[slot] + hold;
 			this.stock[slot] = stock > STOCK_MAX ? STOCK_MAX : stock;
-			this.delivered += this.shipHold[ship];
+			this.delivered += hold;
 		}
 		this.lastPort = port;
 		this.lastGood = cargo;
+		this.logEvent(time, KIND_ARRIVE, port, cargo, hold);
 		this.shipCargo[ship] = NO_GOOD;
 		this.shipHold[ship] = 0;
 		const trips = this.shipTrips[ship];
@@ -141,13 +209,15 @@
 		this.load(ship, port, time);
 	};
 
+	/* an empty hold is allowed: the ship sails on and tries its luck elsewhere */
 	Sim.prototype.load = function (ship, port, time) {
 		const stock = this.stock;
 		const base = port * GOODS;
 		const total = stock[base] + stock[base + 1] + stock[base + 2];
+		let good = NO_GOOD;
 		if (total > 1) {
 			let pick = this.rand() * total;
-			let good = GOODS - 1;
+			good = GOODS - 1;
 			for (let g = 0; g < GOODS; g++) {
 				pick -= stock[base + g];
 				if (pick <= 0) {
@@ -156,21 +226,32 @@
 				}
 			}
 			const available = stock[base + good];
-			const hold = available < HOLD_MAX ? available : HOLD_MAX;
+			const hold = available < this.shipLimit[ship] ? available : this.shipLimit[ship];
 			stock[base + good] -= hold;
 			this.shipCargo[ship] = good;
 			this.shipHold[ship] = hold;
 		}
-		let dest = Math.floor(this.rand() * (PORTS - 1));
-		if (dest >= port) dest += 1;
+		const dest = this.pickDest(port, good);
 		const dx = PORT_X[dest] - PORT_X[port];
 		const dy = PORT_Y[dest] - PORT_Y[port];
-		const travel = Math.sqrt(dx * dx + dy * dy) / SHIP_SPEED;
+		const travel = Math.sqrt(dx * dx + dy * dy) / this.shipSpeed[ship];
 		this.shipFrom[ship] = port;
 		this.shipTo[ship] = dest;
 		this.shipDepart[ship] = time;
 		this.shipArrive[ship] = time + travel;
 		this.events.push(time + travel, KIND_ARRIVE, ship);
+	};
+
+	/* best of two random ports by how badly it misses the cargo */
+	Sim.prototype.pickDest = function (port, good) {
+		let dest = Math.floor(this.rand() * (PORTS - 1));
+		if (dest >= port) dest += 1;
+		if (good === NO_GOOD) return dest;
+		let rival = Math.floor(this.rand() * (PORTS - 1));
+		if (rival >= port) rival += 1;
+		const best = STOCK_MAX - this.stock[dest * GOODS + good];
+		const other = STOCK_MAX - this.stock[rival * GOODS + good];
+		return other > best ? rival : dest;
 	};
 
 	Sim.prototype.retire = function (ship, time) {
@@ -189,6 +270,10 @@
 		this.events.push(this.t, KIND_DISPATCH, port);
 	};
 
+	Sim.prototype.setFleet = function (count) {
+		this.fleetMax = count;
+	};
+
 	Sim.prototype.step = function (simMinutes) {
 		if (!(simMinutes > 0)) return;
 		const target = this.t + simMinutes;
@@ -201,14 +286,21 @@
 	Sim.SHIPS = SHIPS;
 	Sim.PORTS = PORTS;
 	Sim.GOODS = GOODS;
+	Sim.LOG = LOG;
 	Sim.NO_GOOD = NO_GOOD;
 	Sim.NO_PORT = NO_PORT;
 	Sim.STOCK_MAX = STOCK_MAX;
 	Sim.HOLD_MAX = HOLD_MAX;
+	Sim.CONSUME_MINUTES = CONSUME_MINUTES;
+	Sim.KIND_DISPATCH = KIND_DISPATCH;
+	Sim.KIND_ARRIVE = KIND_ARRIVE;
+	Sim.KIND_CONSUME = KIND_CONSUME;
 	Sim.WORLD_W = WORLD_W;
 	Sim.WORLD_H = WORLD_H;
 	Sim.PORT_X = PORT_X;
 	Sim.PORT_Y = PORT_Y;
+	Sim.PORT_NAMES = PORT_NAMES;
+	Sim.GOOD_NAMES = GOOD_NAMES;
 
 	if (typeof module !== 'undefined' && module.exports) module.exports = Sim;
 	else root.Sim = Sim;

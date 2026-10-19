@@ -1,7 +1,8 @@
 /*
  * Canvas renderer and controls. The sim owns all state; this file only reads
  * it and eases ship positions between clock jumps so discrete steps stay
- * readable. Per-frame work reuses preallocated arrays and cached elements.
+ * readable. Per-frame work reuses preallocated arrays, cached elements and a
+ * pool of log rows.
  */
 (function () {
 	'use strict';
@@ -9,6 +10,8 @@
 	const $ = id => document.getElementById(id);
 	const TAU = Math.PI * 2;
 	const GOOD_COLORS = ['#ff5f6d', '#48d18d', '#4f9dff'];
+	const KIND_TAGS = ['dispatch', 'arrive', 'consume'];
+	const KIND_CLASS = ['dispatch', '', 'consume'];
 	const JUMP_MINUTES = 30;
 	const BAR_HEIGHT = 54;
 	const BAR_WIDTH = 12;
@@ -16,6 +19,7 @@
 	const BAR_LIFT = 34;
 	const PORT_RADIUS = 15;
 	const HUD_INTERVAL = 100;
+	const LOG_ROWS = 15;
 	const QUEUE_WINDOW = 20;
 	const QTL_W = 190;
 	const QTL_H = 44;
@@ -34,13 +38,19 @@
 	const eventsEl = $('events');
 	const shipsEl = $('ships');
 	const deliveredEl = $('delivered');
+	const consumedEl = $('consumed');
 	const nextEl = $('next');
+	const logRateEl = $('logRate');
 	const queueCanvas = $('qtl');
 	const queueCtx = queueCanvas.getContext('2d');
 	const speedSlider = $('speed');
 	const speedLabel = $('speedLabel');
+	const fleetSlider = $('fleet');
+	const fleetLabel = $('fleetLabel');
 	const pauseButton = $('pause');
 	const modeButtons = document.querySelectorAll('[data-mode]');
+	const logBody = $('logBody');
+	const logRows = [];
 
 	let sim = new Sim(7);
 	let seed = 7;
@@ -49,11 +59,30 @@
 	let speed = 60;
 	let jumpAcc = 0;
 	let lastProcessed = 0;
+	let lastLogHead = -1;
 	let flashPort = -1;
 	let flashColor = GOOD_COLORS[0];
 	let flashAt = -Infinity;
 	let hudAt = -Infinity;
 	let lastFrame = performance.now();
+
+	function buildLogRows() {
+		for (let i = 0; i < LOG_ROWS; i++) {
+			const row = document.createElement('div');
+			row.className = 'lrow';
+			const time = document.createElement('span');
+			time.className = 'lt';
+			const kind = document.createElement('span');
+			kind.className = 'lk';
+			const text = document.createElement('span');
+			text.className = 'lm';
+			row.appendChild(time);
+			row.appendChild(kind);
+			row.appendChild(text);
+			logBody.appendChild(row);
+			logRows.push({ row, time, kind, text });
+		}
+	}
 
 	function paintBackdrop(width, height, dpr) {
 		backdrop.width = Math.round(width * dpr);
@@ -72,6 +101,8 @@
 		for (let y = 30; y < Sim.WORLD_H; y += 46) {
 			for (let x = 30; x < Sim.WORLD_W; x += 46) backCtx.fillRect(x, y, 2, 2);
 		}
+		backCtx.font = '13px ui-sans-serif, system-ui, sans-serif';
+		backCtx.textAlign = 'center';
 		for (let p = 0; p < Sim.PORTS; p++) {
 			const px = Sim.PORT_X[p];
 			const py = Sim.PORT_Y[p];
@@ -80,6 +111,8 @@
 			glow.addColorStop(1, 'rgba(80, 180, 230, 0)');
 			backCtx.fillStyle = glow;
 			backCtx.fillRect(px - 170, py - 170, 340, 340);
+			backCtx.fillStyle = 'rgba(160, 205, 235, 0.62)';
+			backCtx.fillText(Sim.PORT_NAMES[p], px, py + PORT_RADIUS + 16);
 		}
 	}
 
@@ -220,7 +253,7 @@
 		return (minutes / 60).toFixed(1) + ' h';
 	}
 
-	/* Ticks are event times relative to the clock; a jump slides them left. */
+	/* ticks are event times relative to the clock; a jump slides them left */
 	function drawTimeline() {
 		const events = sim.events;
 		queueCtx.clearRect(0, 0, QTL_W, QTL_H);
@@ -231,14 +264,46 @@
 		for (let i = 0; i < events.size; i++) {
 			const x = (events.time[i] - sim.t) / QUEUE_WINDOW * QTL_W;
 			if (x < 0 || x >= QTL_W) continue;
-			const arrival = events.kind[i] === 1;
-			const cargo = arrival ? sim.shipCargo[events.ref[i]] : Sim.NO_GOOD;
-			const height = arrival ? 24 : 13;
-			queueCtx.fillStyle = cargo === Sim.NO_GOOD ? '#39708f' : GOOD_COLORS[cargo];
-			queueCtx.fillRect(x, QTL_H - 11 - height, 2, height);
+			const kind = events.kind[i];
+			if (kind === Sim.KIND_ARRIVE) {
+				const cargo = sim.shipCargo[events.ref[i]];
+				queueCtx.fillStyle = cargo === Sim.NO_GOOD ? '#39708f' : GOOD_COLORS[cargo];
+				queueCtx.fillRect(x, 9, 2, 24);
+				continue;
+			}
+			queueCtx.fillStyle = kind === Sim.KIND_CONSUME ? '#3d8f7f' : '#4d7b96';
+			queueCtx.fillRect(x, 20, 2, 13);
 		}
 		queueCtx.fillStyle = '#e8f6ff';
 		queueCtx.fillRect(0, 0, 3, QTL_H);
+	}
+
+	/* newest event first, straight out of the sim ring: rows are reused */
+	function updateLog() {
+		const rows = Math.min(sim.logCount, LOG_ROWS);
+		for (let i = 0; i < rows; i++) {
+			const slot = (sim.logHead - 1 - i + Sim.LOG) % Sim.LOG;
+			const kind = sim.logKind[slot];
+			const port = sim.logRef[slot];
+			const good = sim.logGood[slot];
+			const el = logRows[i];
+			el.row.className = 'lrow ' + KIND_CLASS[kind] + (i === 0 ? ' fresh' : '');
+			el.time.textContent = formatClock(sim.logTime[slot]);
+			el.kind.textContent = KIND_TAGS[kind];
+			if (kind === Sim.KIND_ARRIVE) {
+				const cargo = good === Sim.NO_GOOD ? 'empty' : Sim.GOOD_NAMES[good];
+				el.text.textContent = '→ ' + Sim.PORT_NAMES[port] + ' · ' +
+					Math.round(sim.logAmount[slot]) + ' ' + cargo;
+			} else if (kind === Sim.KIND_CONSUME) {
+				el.text.textContent = Sim.PORT_NAMES[port] + ' eats ' + Math.round(sim.logAmount[slot]);
+			} else {
+				el.text.textContent = 'new ship · ' + Sim.PORT_NAMES[port];
+			}
+		}
+		for (let i = 0; i < LOG_ROWS; i++) {
+			logRows[i].row.style.display = i < rows ? '' : 'none';
+		}
+		logRateEl.textContent = sim.processed + ' processed';
 	}
 
 	function updateHud(now) {
@@ -247,10 +312,15 @@
 		clockEl.textContent = formatClock(sim.t);
 		qlenEl.textContent = sim.events.size;
 		eventsEl.textContent = sim.processed;
-		shipsEl.textContent = sim.shipCount;
+		shipsEl.textContent = sim.shipCount + ' / ' + sim.fleetMax;
 		deliveredEl.textContent = Math.round(sim.delivered);
+		consumedEl.textContent = Math.round(sim.consumed);
 		nextEl.textContent = formatNext(sim.events.peekTime() - sim.t);
 		drawTimeline();
+		if (sim.logHead !== lastLogHead || sim.processed === 0) {
+			lastLogHead = sim.logHead;
+			updateLog();
+		}
 	}
 
 	function advance(dt) {
@@ -296,10 +366,13 @@
 	function reset() {
 		seed += 1;
 		sim = new Sim(seed);
+		sim.setFleet(Number(fleetSlider.value));
 		lastProcessed = 0;
+		lastLogHead = -1;
 		jumpAcc = 0;
 		flashPort = -1;
 		shipGen.fill(0);
+		updateLog();
 	}
 
 	function frame(now) {
@@ -316,6 +389,10 @@
 	speedSlider.addEventListener('input', () => {
 		speed = decodeSpeed(Number(speedSlider.value));
 		updateSpeedLabel();
+	});
+	fleetSlider.addEventListener('input', () => {
+		fleetLabel.textContent = fleetSlider.value;
+		sim.setFleet(Number(fleetSlider.value));
 	});
 	$('reset').addEventListener('click', reset);
 	window.addEventListener('resize', resize);
@@ -348,8 +425,12 @@
 	queueCanvas.width = QTL_W * QTL_SCALE;
 	queueCanvas.height = QTL_H * QTL_SCALE;
 	queueCtx.setTransform(QTL_SCALE, 0, 0, QTL_SCALE, 0, 0);
+	buildLogRows();
 	speed = decodeSpeed(Number(speedSlider.value));
+	sim.setFleet(Number(fleetSlider.value));
+	fleetLabel.textContent = fleetSlider.value;
 	updateSpeedLabel();
+	updateLog();
 	resize();
 	requestAnimationFrame(frame);
 })();

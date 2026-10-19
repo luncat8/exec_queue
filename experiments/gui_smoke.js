@@ -34,6 +34,10 @@ class Element {
 		this.listeners = new Map();
 		this.width = 0;
 		this.height = 0;
+		this.children = [];
+	}
+	appendChild(child) {
+		this.children.push(child);
 	}
 	addEventListener(type, fn) {
 		if (!this.listeners.has(type)) this.listeners.set(type, []);
@@ -44,6 +48,13 @@ class Element {
 	}
 	getBoundingClientRect() {
 		return { left: 0, top: 0, width: 1280, height: 800 };
+	}
+	/* the log panel is built once, so read its rows back through this */
+	visibleText() {
+		return this.children
+			.filter(child => child.style.display !== 'none')
+			.map(row => row.children.map(cell => cell.textContent).join(' '))
+			.join('|');
 	}
 	getContext() {
 		const gradient = { addColorStop() {} };
@@ -62,9 +73,13 @@ class Element {
 	}
 }
 
-const ids = ['c', 'qtl', 'clock', 'qlen', 'events', 'ships', 'delivered', 'next', 'speed', 'speedLabel', 'pause', 'reset'];
+const ids = [
+	'c', 'qtl', 'clock', 'qlen', 'events', 'ships', 'delivered', 'consumed', 'next',
+	'logRate', 'logBody', 'speed', 'speedLabel', 'fleet', 'fleetLabel', 'pause', 'reset'
+];
 const elements = new Map(ids.map(id => [id, new Element(id)]));
 elements.get('speed').value = '593'; // mirrors index.html
+elements.get('fleet').value = '30';
 const modeButtons = [new Element('continuous'), new Element('jump')];
 modeButtons[0].dataset.mode = 'continuous';
 modeButtons[1].dataset.mode = 'jump';
@@ -78,7 +93,7 @@ const sandbox = {
 	document: {
 		getElementById: id => elements.get(id),
 		querySelectorAll: selector => (selector === '[data-mode]' ? modeButtons : []),
-		createElement: () => new Element('canvas')
+		createElement: tag => new Element(tag)
 	},
 	performance: { now: () => now },
 	requestAnimationFrame: callback => frames.push(callback),
@@ -109,7 +124,8 @@ function runFrames(count, step) {
 
 const clock = () => elements.get('clock').textContent;
 const events = () => Number(elements.get('events').textContent);
-const ships = () => Number(elements.get('ships').textContent);
+const ships = () => Number.parseInt(elements.get('ships').textContent, 10);
+const stat = id => Number(elements.get(id).textContent);
 
 assert.strictEqual(elements.get('qtl').width, 380, 'queue timeline canvas must be sized once at setup');
 runFrames(60, 16.7);
@@ -117,7 +133,12 @@ assert(clock().startsWith('day 1'), 'clock must render');
 assert(events() > 50, 'a minute of trade must process events, got ' + events());
 const fleet = ships();
 assert(fleet >= 20 && fleet <= 30, 'fleet must be sailing, got ' + fleet);
-assert(Number(elements.get('delivered').textContent) > 0, 'ships must deliver cargo');
+assert.strictEqual(elements.get('ships').textContent, fleet + ' / 30', 'fleet stat must show the cap');
+assert(stat('delivered') > 0, 'ships must deliver cargo');
+assert(stat('consumed') > 0, 'ports must eat part of their stock');
+const logText = elements.get('logBody').visibleText();
+assert(logText.includes('arrive') || logText.includes('consume'), 'event log must fill, got: ' + logText.slice(0, 80));
+assert(elements.get('logBody').children.length === 15, 'log rows are preallocated once');
 
 modeButtons[1].dispatch('click');
 elements.get('speed').value = '900';
@@ -141,6 +162,15 @@ canvas.dispatch('click', {
 	clientY: (800 - 1000 * scale) / 2 + 300 * scale
 });
 runFrames(30, 16.7);
+
+elements.get('fleet').value = '6';
+elements.get('fleet').dispatch('input');
+assert.strictEqual(elements.get('fleetLabel').textContent, '6', 'fleet label must follow the slider');
+runFrames(240, 16.7);
+assert(ships() <= 6, 'fleet slider must cap the fleet, got ' + ships());
+elements.get('fleet').value = '30';
+elements.get('fleet').dispatch('input');
+runFrames(120, 16.7);
 
 windowListeners.get('resize')[0]();
 const beforeReset = events();

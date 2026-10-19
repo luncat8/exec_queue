@@ -1,0 +1,4 @@
+# queue bench, node v22.22.3, events=50000 (push + drain)
+min-heap ms=10.206 ops_per_s=9798545
+sorted-array ms=161.837 ops_per_s=617907
+speedup x15.9
