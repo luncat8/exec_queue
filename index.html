@@ -3,11 +3,43 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title></title>
+<title>exec queue · sea trade</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="app">
-  <canvas id="c"></canvas>
+	<canvas id="c"></canvas>
+	<div id="hud">
+		<div id="clock">day 1 · 00:00</div>
+		<div class="stat"><span>queue</span><b id="qlen">0</b></div>
+		<div class="stat"><span>events</span><b id="events">0</b></div>
+		<div class="stat"><span>ships</span><b id="ships">0</b></div>
+		<div class="stat"><span>delivered</span><b id="delivered">0</b></div>
+		<div class="stat"><span>next event</span><b id="next">—</b></div>
+		<div id="legend">
+			<span class="good r">r</span>
+			<span class="good g">g</span>
+			<span class="good b">b</span>
+		</div>
+		<div id="hint">click a port to dispatch<br>space pause · j step 30 min</div>
+		<div id="timeline">
+			<div class="caption"><span>time queue</span><span>next 20 min</span></div>
+			<canvas id="qtl"></canvas>
+		</div>
+	</div>
+	<div id="controls">
+		<button id="pause" title="space">pause</button>
+		<div class="seg">
+			<button data-mode="continuous" class="on">continuous</button>
+			<button data-mode="jump" title="advance the clock in fixed 30 min steps">jump</button>
+		</div>
+		<input id="speed" type="range" min="0" max="1000" value="593">
+		<output id="speedLabel">×60</output>
+		<button id="reset">reset</button>
+	</div>
 </div>
+<script src="exec_queue.js"></script>
+<script src="sim.js"></script>
+<script src="gui.js"></script>
 </body>
 </html>
