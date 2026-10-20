@@ -1,0 +1,7 @@
+seed 1 | ports 8→26 | colonies at 2h 1, 4h 5, 8h 15, 15h 18 | avg 34.6 min/colony | routes 1124 | delivered 25359 | aim 0 | queue peak 27
+seed 2 | ports 8→26 | colonies at 2h 0, 4h 4, 8h 12, 15h 18 | avg 30.6 min/colony | routes 1132 | delivered 23798 | aim 0 | queue peak 27
+seed 3 | ports 8→26 | colonies at 2h 0, 4h 5, 8h 15, 15h 18 | avg 30.7 min/colony | routes 1157 | delivered 23908 | aim 0 | queue peak 27
+seed 7 | ports 8→26 | colonies at 2h 1, 4h 5, 8h 14, 15h 18 | avg 30.8 min/colony | routes 1188 | delivered 25827 | aim 0 | queue peak 27
+seed 9 | ports 8→26 | colonies at 2h 1, 4h 5, 8h 13, 15h 18 | avg 32.9 min/colony | routes 1133 | delivered 24216 | aim 0 | queue peak 27
+frames 3600 (60 sim minutes) | step total 1.5 ms | 0.4 µs/frame | events 148 | ports 11
+long 24000 minutes | ports 26 | colonies 18 | routes 47578 | delivered 1013095 | queue now 27 peak 27 | sim time 614 ms
