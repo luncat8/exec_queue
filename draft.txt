@@ -17,3 +17,6 @@ display supplies as vertical bars r, g, b
 
 
 A binary min-heap is the right structure. Sorted-array insertion is O(n) due to the memmove; measured with 50,000 events (push + drain) in experiments/queue_bench.js: heap ~11 ms vs sorted array ~167 ms (≈15×).
+
+
+What if the ship changes its mind and changes course, or sinks? Can we update it here? (This is probably simpler and faster than searching through the heap and deleting the event: the old event stays in the heap, but when it comes up for processing, it will be skipped.)

@@ -312,3 +312,8 @@ button.on {
 		font-size: 11px;
 	}
 }
+#options { margin-top: 10px; font-size: 11px; }
+#options label { display: block; margin: 6px 0; }
+#options input { vertical-align: middle; }
+#options select { background: #0d3149; color: #cfe0f5; border: 1px solid #2d6c92; }
+#selectedShip { margin-top: 8px; color: #9fd8ff; }

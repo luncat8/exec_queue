@@ -1,7 +1,6 @@
 /*
  * Canvas renderer and controls. The sim owns all state; this file only reads
- * it and eases ship positions between clock jumps so discrete steps stay
- * readable. Per-frame work reuses preallocated arrays, cached elements and a
+ * it, with exact positions by default and optional trailing smoothing. Per-frame work reuses preallocated arrays, cached elements and a
  * pool of log rows.
  */
 (function () {
@@ -32,6 +31,17 @@
 	const view = { dpr: 1, scale: 1, offX: 0, offY: 0 };
 	const shipX = new Float32Array(Sim.SHIPS);
 	const shipY = new Float32Array(Sim.SHIPS);
+	const position = { x: 0, y: 0, angle: 0 };
+	const routeDash = [6, 6];
+	const noDash = [];
+	const docking = $('docking');
+	const routes = $('routes');
+	const glmLook = $('glmLook');
+	const smooth = $('smooth');
+	const destination = $('destination');
+	const selectedLabel = $('selectedShip');
+	let selected = -1;
+	let selectedGen = 0;
 	const shipGen = new Uint32Array(Sim.SHIPS);
 	const clockEl = $('clock');
 	const qlenEl = $('qlen');
@@ -149,16 +159,23 @@
 		for (let p = 0; p < Sim.PORTS; p++) {
 			const px = Sim.PORT_X[p];
 			const py = Sim.PORT_Y[p];
-			const barX = px - barSpan / 2;
-			const barTop = py - BAR_LIFT - BAR_HEIGHT;
-			ctx.fillStyle = 'rgba(150, 205, 235, 0.08)';
-			for (let g = 0; g < 3; g++) {
-				ctx.fillRect(barX + g * (BAR_WIDTH + BAR_GAP), barTop, BAR_WIDTH, BAR_HEIGHT);
-			}
-			for (let g = 0; g < 3; g++) {
-				const fill = stock[p * 3 + g] / Sim.STOCK_MAX * BAR_HEIGHT;
-				ctx.fillStyle = GOOD_COLORS[g];
-				ctx.fillRect(barX + g * (BAR_WIDTH + BAR_GAP), barTop + BAR_HEIGHT - fill, BAR_WIDTH, fill);
+			if (glmLook.checked) {
+				for (let g = 0; g < 3; g++) {
+					ctx.fillStyle = GOOD_COLORS[g];
+					ctx.fillRect(px - 23, py + 51 + g * 5, stock[p * 3 + g] / Sim.STOCK_MAX * 46, 2.5);
+				}
+			} else {
+				const barX = px - barSpan / 2;
+				const barTop = py - BAR_LIFT - BAR_HEIGHT;
+				ctx.fillStyle = 'rgba(150, 205, 235, 0.08)';
+				for (let g = 0; g < 3; g++) {
+					ctx.fillRect(barX + g * (BAR_WIDTH + BAR_GAP), barTop, BAR_WIDTH, BAR_HEIGHT);
+				}
+				for (let g = 0; g < 3; g++) {
+					const fill = stock[p * 3 + g] / Sim.STOCK_MAX * BAR_HEIGHT;
+					ctx.fillStyle = GOOD_COLORS[g];
+					ctx.fillRect(barX + g * (BAR_WIDTH + BAR_GAP), barTop + BAR_HEIGHT - fill, BAR_WIDTH, fill);
+				}
 			}
 			ctx.beginPath();
 			ctx.arc(px, py, PORT_RADIUS, 0, TAU);
@@ -179,19 +196,11 @@
 		const ease = 1 - Math.exp(-dt * 9);
 		for (let i = 0; i < Sim.SHIPS; i++) {
 			if (sim.shipAlive[i] === 0) continue;
-			const from = sim.shipFrom[i];
-			const to = sim.shipTo[i];
-			const fx = Sim.PORT_X[from];
-			const fy = Sim.PORT_Y[from];
-			const tx = Sim.PORT_X[to];
-			const ty = Sim.PORT_Y[to];
-			const span = sim.shipArrive[i] - sim.shipDepart[i];
-			let f = span > 0 ? (sim.t - sim.shipDepart[i]) / span : 1;
-			f = f < 0 ? 0 : f > 1 ? 1 : f;
-			const goalX = fx + (tx - fx) * f;
-			const goalY = fy + (ty - fy) * f;
+			sim.position(i, position);
+			const goalX = position.x;
+			const goalY = position.y;
 			// a recycled slot is a different ship: snap, do not sail to it
-			if (sim.shipGen[i] !== shipGen[i]) {
+			if (!smooth.checked || sim.shipState[i] !== Sim.SAILING || sim.shipGen[i] !== shipGen[i]) {
 				shipGen[i] = sim.shipGen[i];
 				shipX[i] = goalX;
 				shipY[i] = goalY;
@@ -203,10 +212,11 @@
 			const size = 1 + (sim.shipHold[i] / Sim.HOLD_MAX) * 0.2;
 			ctx.save();
 			ctx.translate(shipX[i], shipY[i]);
-			ctx.rotate(Math.atan2(ty - fy, tx - fx));
+			ctx.rotate(position.angle);
 			ctx.beginPath();
 			ctx.moveTo(10 * size, 0);
 			ctx.lineTo(-6 * size, 5.5 * size);
+			if (glmLook.checked) ctx.lineTo(-4 * size, 0);
 			ctx.lineTo(-6 * size, -5.5 * size);
 			ctx.closePath();
 			ctx.fillStyle = cargo === Sim.NO_GOOD ? '#8fb3c8' : GOOD_COLORS[cargo];
@@ -215,7 +225,28 @@
 			ctx.strokeStyle = 'rgba(3, 14, 22, 0.8)';
 			ctx.stroke();
 			ctx.restore();
+			if (i === selected) {
+				ctx.beginPath();
+				ctx.arc(shipX[i], shipY[i], 16, 0, TAU);
+				ctx.strokeStyle = '#fff';
+				ctx.stroke();
+			}
 		}
+	}
+
+	function drawRoutes() {
+		if (!routes.checked) return;
+		ctx.setLineDash(routeDash);
+		ctx.strokeStyle = 'rgba(130,180,255,0.18)';
+		ctx.lineWidth = 1;
+		for (let i = 0; i < Sim.SHIPS; i++) {
+			if (!sim.shipAlive[i] || sim.shipState[i] !== Sim.SAILING) continue;
+			ctx.beginPath();
+			ctx.moveTo(sim.shipStartX[i], sim.shipStartY[i]);
+			ctx.lineTo(Sim.PORT_X[sim.shipTo[i]], Sim.PORT_Y[sim.shipTo[i]]);
+			ctx.stroke();
+		}
+		ctx.setLineDash(noDash);
 	}
 
 	function draw(now, dt) {
@@ -231,6 +262,7 @@
 			view.dpr * view.scale, 0, 0, view.dpr * view.scale,
 			view.dpr * view.offX, view.dpr * view.offY
 		);
+		drawRoutes();
 		drawPorts(now);
 		drawShips(dt);
 	}
@@ -265,6 +297,8 @@
 			const x = (events.time[i] - sim.t) / QUEUE_WINDOW * QTL_W;
 			if (x < 0 || x >= QTL_W) continue;
 			const kind = events.kind[i];
+			if ((kind === Sim.KIND_ARRIVE || kind === Sim.KIND_LOAD || kind === Sim.KIND_UNLOAD) &&
+				(!sim.shipAlive[events.ref[i]] || events.revision[i] !== sim.shipRevision[events.ref[i]])) continue;
 			if (kind === Sim.KIND_ARRIVE) {
 				const cargo = sim.shipCargo[events.ref[i]];
 				queueCtx.fillStyle = cargo === Sim.NO_GOOD ? '#39708f' : GOOD_COLORS[cargo];
@@ -309,6 +343,9 @@
 	function updateHud(now) {
 		if (now - hudAt < HUD_INTERVAL) return;
 		hudAt = now;
+		if (selected >= 0 && (!sim.shipAlive[selected] || sim.shipGen[selected] !== selectedGen)) selected = -1;
+		selectedLabel.textContent = selected < 0 ? 'click a ship to select'
+			: 'ship ' + (selected + 1) + ' · ' + ['sailing', 'loading', 'unloading', 'waiting'][sim.shipState[selected]];
 		clockEl.textContent = formatClock(sim.t);
 		qlenEl.textContent = sim.events.size;
 		eventsEl.textContent = sim.processed;
@@ -365,7 +402,8 @@
 
 	function reset() {
 		seed += 1;
-		sim = new Sim(seed);
+		sim = new Sim(seed, docking.checked);
+		selected = -1;
 		sim.setFleet(Number(fleetSlider.value));
 		lastProcessed = 0;
 		lastLogHead = -1;
@@ -408,6 +446,15 @@
 		const rect = canvas.getBoundingClientRect();
 		const wx = (event.clientX - rect.left - view.offX) / view.scale;
 		const wy = (event.clientY - rect.top - view.offY) / view.scale;
+		for (let i = 0; i < Sim.SHIPS; i++) {
+			if (!sim.shipAlive[i]) continue;
+			const dx = wx - shipX[i], dy = wy - shipY[i];
+			if (dx * dx + dy * dy > 16 * 16) continue;
+			selected = i;
+			selectedGen = sim.shipGen[i];
+			destination.value = sim.shipTo[i];
+			return;
+		}
 		let hit = -1;
 		let best = 44 * 44;
 		for (let p = 0; p < Sim.PORTS; p++) {
@@ -420,6 +467,24 @@
 			}
 		}
 		if (hit >= 0) sim.requestShip(hit);
+	});
+
+	for (let p = 0; p < Sim.PORTS; p++) {
+		const option = document.createElement('option');
+		option.value = p;
+		option.textContent = Sim.PORT_NAMES[p];
+		destination.appendChild(option);
+	}
+	function validSelection() {
+		return selected >= 0 && sim.shipAlive[selected] && sim.shipGen[selected] === selectedGen;
+	}
+	docking.addEventListener('change', reset);
+	$('reroute').addEventListener('click', () => {
+		if (validSelection()) sim.reroute(selected, Number(destination.value));
+	});
+	$('sinkShip').addEventListener('click', () => {
+		if (validSelection()) sim.sinkShip(selected);
+		selected = -1;
 	});
 
 	queueCanvas.width = QTL_W * QTL_SCALE;

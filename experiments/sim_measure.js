@@ -31,7 +31,7 @@ for (let minute = 0; minute < SIM_MINUTES; minute += STEP) {
 	const pending = sim.events.peekTime();
 	if (pending < sim.t) throw new Error('pending event in the past at ' + sim.t);
 	for (let s = 0; s < Sim.SHIPS; s++) {
-		if (sim.shipAlive[s] === 0) continue;
+		if (sim.shipAlive[s] === 0 || sim.shipState[s] !== Sim.SAILING) continue;
 		if (sim.shipArrive[s] < sim.t) throw new Error('ship arrival in the past at ' + sim.t);
 		if (sim.shipArrive[s] <= sim.shipDepart[s]) throw new Error('ship without travel time');
 	}

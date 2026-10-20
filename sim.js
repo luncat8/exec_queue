@@ -1,14 +1,10 @@
 /*
  * Sea-trade simulation driven entirely by the discrete-event queue.
  *
- * Three event kinds share one queue:
- *   KIND_ARRIVE   ref = ship slot   - a voyage finished
- *   KIND_DISPATCH ref = port        - a ship may enter the fleet
- *   KIND_CONSUME  ref = port        - the port eats part of its stock
- *
- * Every ship holds exactly one future arrival. Handlers schedule from the
- * event time, never from the frame clock, so a clock jump over several
- * voyages stays consistent.
+ * Ports schedule dispatch and consumption; ships schedule arrival, unloading,
+ * and loading (retrying while cargo is scarce). Ship event revisions allow
+ * lazy cancellation without heap searches. Schedule from event time, not the
+ * frame clock, so clock jumps preserve the same simulation.
  */
 (function (root) {
 	'use strict';
@@ -33,6 +29,9 @@
 	const KIND_DISPATCH = 0;
 	const KIND_ARRIVE = 1;
 	const KIND_CONSUME = 2;
+	const KIND_LOAD = 3;
+	const KIND_UNLOAD = 4;
+	const SAILING = 0, LOADING = 1, UNLOADING = 2, WAITING = 3;
 
 	const WORLD_W = 1600;
 	const WORLD_H = 1000;
@@ -52,7 +51,11 @@
 		};
 	}
 
-	function Sim(seed) {
+	function Sim(seed, docking = true) {
+		this.docking = docking;
+		this.positionScratch = { x: 0, y: 0, angle: 0 };
+		this.skipped = 0;
+		this.sunk = 0;
 		this.rand = seedRandom(seed || 1);
 		this.t = 0;
 		this.events = new ExecQueue(512);
@@ -80,6 +83,12 @@
 		this.shipSpeed = new Float64Array(SHIPS);
 		this.shipCargo = new Uint8Array(SHIPS);
 		this.shipTrips = new Uint16Array(SHIPS);
+		this.shipState = new Uint8Array(SHIPS);
+		this.shipRevision = new Uint32Array(SHIPS);
+		this.shipStartX = new Float64Array(SHIPS);
+		this.shipStartY = new Float64Array(SHIPS);
+		this.shipDock = new Uint8Array(SHIPS);
+		this.dockCounter = new Uint32Array(PORTS);
 		this.shipGen = new Uint32Array(SHIPS);
 		/* newest first: the gui reads this ring instead of logging in the sim */
 		this.logTime = new Float64Array(LOG);
@@ -130,12 +139,20 @@
 		if (this.logCount < LOG) this.logCount += 1;
 	};
 
-	Sim.prototype.handleEvent = function (time, kind, ref) {
+	Sim.prototype.handleEvent = function (time, kind, ref, revision) {
+		if (kind === KIND_ARRIVE || kind === KIND_LOAD || kind === KIND_UNLOAD) {
+			if (!this.shipAlive[ref] || this.shipRevision[ref] !== revision) {
+				this.skipped += 1;
+				return;
+			}
+		}
 		this.produce(time - this.t);
 		this.t = time;
 		this.processed += 1;
 		if (kind === KIND_ARRIVE) this.arrive(time, ref);
 		else if (kind === KIND_CONSUME) this.consume(time, ref);
+		else if (kind === KIND_LOAD) this.load(ref, this.shipTo[ref], time);
+		else if (kind === KIND_UNLOAD) this.unload(time, ref);
 		else this.dispatch(time, ref);
 	};
 
@@ -182,10 +199,19 @@
 		this.shipArrive[ship] = time;
 		this.spawned += 1;
 		this.logEvent(time, KIND_DISPATCH, home, NO_GOOD, 0);
-		this.load(ship, home, time);
+		this.dock(ship, home);
+		if (this.docking) this.scheduleShip(time + 0.4, KIND_LOAD, ship);
+		else this.load(ship, home, time);
 	};
 
 	Sim.prototype.arrive = function (time, ship) {
+		this.dock(ship, this.shipTo[ship]);
+		if (!this.docking) return this.unload(time, ship);
+		this.shipState[ship] = UNLOADING;
+		this.scheduleShip(time + 0.4, KIND_UNLOAD, ship);
+	};
+
+	Sim.prototype.unload = function (time, ship) {
 		const port = this.shipTo[ship];
 		const cargo = this.shipCargo[ship];
 		const hold = this.shipHold[ship];
@@ -206,19 +232,30 @@
 			return;
 		}
 		this.shipTrips[ship] = trips + 1;
-		this.load(ship, port, time);
+		if (!this.docking) return this.load(ship, port, time);
+		this.shipState[ship] = LOADING;
+		this.scheduleShip(time + 0.4, KIND_LOAD, ship);
 	};
 
-	/* an empty hold is allowed: the ship sails on and tries its luck elsewhere */
+	/* Docked ships wait for a viable cargo; instant mode permits empty voyages. */
 	Sim.prototype.load = function (ship, port, time) {
 		const stock = this.stock;
 		const base = port * GOODS;
-		const total = stock[base] + stock[base + 1] + stock[base + 2];
+		let total = 0;
+		for (let g = 0; g < GOODS; g++) {
+			if (!this.docking || stock[base + g] >= 6) total += stock[base + g];
+		}
+		if (this.docking && total === 0) {
+			this.shipState[ship] = WAITING;
+			this.scheduleShip(time + 0.4, KIND_LOAD, ship);
+			return;
+		}
 		let good = NO_GOOD;
 		if (total > 1) {
 			let pick = this.rand() * total;
 			good = GOODS - 1;
 			for (let g = 0; g < GOODS; g++) {
+				if (this.docking && stock[base + g] < 6) continue;
 				pick -= stock[base + g];
 				if (pick <= 0) {
 					good = g;
@@ -232,14 +269,64 @@
 			this.shipHold[ship] = hold;
 		}
 		const dest = this.pickDest(port, good);
-		const dx = PORT_X[dest] - PORT_X[port];
-		const dy = PORT_Y[dest] - PORT_Y[port];
-		const travel = Math.sqrt(dx * dx + dy * dy) / this.shipSpeed[ship];
 		this.shipFrom[ship] = port;
+		this.sail(ship, dest, time, PORT_X[port], PORT_Y[port]);
+	};
+
+	Sim.prototype.scheduleShip = function (time, kind, ship) {
+		this.shipRevision[ship] += 1;
+		this.events.push(time, kind, ship, this.shipRevision[ship]);
+	};
+
+	Sim.prototype.dock = function (ship, port) {
+		this.shipState[ship] = LOADING;
+		this.shipDock[ship] = this.dockCounter[port]++ % 8;
+	};
+
+	Sim.prototype.sail = function (ship, dest, time, x, y) {
+		const travel = Math.hypot(PORT_X[dest] - x, PORT_Y[dest] - y) / this.shipSpeed[ship];
+		this.shipState[ship] = SAILING;
+		this.shipStartX[ship] = x;
+		this.shipStartY[ship] = y;
 		this.shipTo[ship] = dest;
 		this.shipDepart[ship] = time;
 		this.shipArrive[ship] = time + travel;
-		this.events.push(time + travel, KIND_ARRIVE, ship);
+		this.scheduleShip(time + travel, KIND_ARRIVE, ship);
+	};
+
+	Sim.prototype.position = function (ship, out) {
+		const port = this.shipTo[ship];
+		if (this.shipState[ship] !== SAILING) {
+			out.angle = -Math.PI / 2 + (this.shipDock[ship] - 3.5) * 0.32;
+			out.x = PORT_X[port] + Math.cos(out.angle) * 26;
+			out.y = PORT_Y[port] + Math.sin(out.angle) * 26;
+			return;
+		}
+		const span = this.shipArrive[ship] - this.shipDepart[ship];
+		const f = span > 0 ? Math.max(0, Math.min(1, (this.t - this.shipDepart[ship]) / span)) : 1;
+		const x = this.shipStartX[ship], y = this.shipStartY[ship];
+		out.x = x + (PORT_X[port] - x) * f;
+		out.y = y + (PORT_Y[port] - y) * f;
+		out.angle = Math.atan2(PORT_Y[port] - y, PORT_X[port] - x);
+	};
+
+	Sim.prototype.reroute = function (ship, port) {
+		if (!this.shipAlive[ship] || port < 0 || port >= PORTS || !Number.isInteger(port)) return false;
+		const position = this.positionScratch;
+		this.position(ship, position);
+		this.sail(ship, port, this.t, position.x, position.y);
+		return true;
+	};
+
+	Sim.prototype.sinkShip = function (ship) {
+		if (!this.shipAlive[ship]) return false;
+		this.shipAlive[ship] = 0;
+		this.shipRevision[ship] += 1;
+		this.shipCount -= 1;
+		this.shipHold[ship] = 0;
+		this.shipCargo[ship] = NO_GOOD;
+		this.sunk += 1;
+		return true;
 	};
 
 	/* best of two random ports by how badly it misses the cargo */
@@ -256,6 +343,7 @@
 
 	Sim.prototype.retire = function (ship, time) {
 		this.shipAlive[ship] = 0;
+		this.shipRevision[ship] += 1;
 		this.shipCount -= 1;
 		this.retired += 1;
 		this.events.push(time + 5 + this.rand() * 15, KIND_DISPATCH, NO_PORT);
@@ -283,6 +371,9 @@
 		if (this.events.size > this.queuePeak) this.queuePeak = this.events.size;
 	};
 
+	Sim.KIND_LOAD = KIND_LOAD;
+	Sim.KIND_UNLOAD = KIND_UNLOAD;
+	Sim.SAILING = SAILING;
 	Sim.SHIPS = SHIPS;
 	Sim.PORTS = PORTS;
 	Sim.GOODS = GOODS;

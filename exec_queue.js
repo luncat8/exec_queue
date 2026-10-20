@@ -11,6 +11,7 @@
 		this.time = new Float64Array(cap);
 		this.kind = new Uint8Array(cap);
 		this.ref = new Uint32Array(cap);
+		this.revision = new Uint32Array(cap);
 		this.size = 0;
 	}
 
@@ -22,16 +23,20 @@
 		kind.set(this.kind);
 		const ref = new Uint32Array(cap);
 		ref.set(this.ref);
+		const revision = new Uint32Array(cap);
+		revision.set(this.revision);
+		this.revision = revision;
 		this.time = time;
 		this.kind = kind;
 		this.ref = ref;
 	};
 
-	ExecQueue.prototype.push = function (time, kind, ref) {
+	ExecQueue.prototype.push = function (time, kind, ref, revision = 0) {
 		if (this.size === this.time.length) this.grow();
 		const times = this.time;
 		const kinds = this.kind;
 		const refs = this.ref;
+		const revisions = this.revision;
 		let i = this.size++;
 		while (i > 0) {
 			const parent = (i - 1) >> 1;
@@ -39,22 +44,26 @@
 			times[i] = times[parent];
 			kinds[i] = kinds[parent];
 			refs[i] = refs[parent];
+			revisions[i] = revisions[parent];
 			i = parent;
 		}
 		times[i] = time;
 		kinds[i] = kind;
 		refs[i] = ref;
+		revisions[i] = revision;
 	};
 
 	ExecQueue.prototype.popRoot = function () {
 		const times = this.time;
 		const kinds = this.kind;
 		const refs = this.ref;
+		const revisions = this.revision;
 		const n = --this.size;
 		if (n === 0) return;
 		const time = times[n];
 		const kind = kinds[n];
 		const ref = refs[n];
+		const revision = revisions[n];
 		let i = 0;
 		for (;;) {
 			let child = i * 2 + 1;
@@ -65,11 +74,13 @@
 			times[i] = times[child];
 			kinds[i] = kinds[child];
 			refs[i] = refs[child];
+			revisions[i] = revisions[child];
 			i = child;
 		}
 		times[i] = time;
 		kinds[i] = kind;
 		refs[i] = ref;
+		revisions[i] = revision;
 	};
 
 	/*
@@ -82,8 +93,9 @@
 			const time = this.time[0];
 			const kind = this.kind[0];
 			const ref = this.ref[0];
+			const revision = this.revision[0];
 			this.popRoot();
-			onEvent(time, kind, ref);
+			onEvent(time, kind, ref, revision);
 		}
 	};
 

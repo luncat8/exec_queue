@@ -1,11 +1,11 @@
 # sim measure, seed=11, minutes=20000, step=5
-cpu_ms=53.5
-events=68494 events_per_sim_min=3.425
-events_per_cpu_s=1281264
-ships_alive=29 spawned=3696 retired=3667
-delivered=1325990 delivered_per_sim_min=66.30
+cpu_ms=60.9
+events=162528 events_per_sim_min=8.126
+events_per_cpu_s=2666642
+ships_alive=26 spawned=3404 retired=3378
+delivered=1233429 delivered_per_sim_min=61.67
 queue_min=36 queue_avg=36.00 queue_max=36 queue_peak=36
-stock_min=0.0 stock_avg=63.6 stock_max=120.0
-stock_fill_pct=53.0 lt25=12.8 lt50=45.1 lt75=80.9
-empty_steps=880 of 4000 (22.0%)
-empty_first=15:1 25:1 45:1 55:2 75:2 85:1 95:1 105:1
+stock_min=0.0 stock_avg=63.8 stock_max=120.0
+stock_fill_pct=53.2 lt25=12.8 lt50=44.7 lt75=80.5
+empty_steps=839 of 4000 (21.0%)
+empty_first=25:1 40:1 45:3 50:1 55:2 65:2 80:1 85:1

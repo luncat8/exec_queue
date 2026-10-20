@@ -22,7 +22,16 @@
 			<span class="good g">timber</span>
 			<span class="good b">iron</span>
 		</div>
-		<div id="hint">click a port to dispatch<br>space pause · j step 30 min</div>
+		<div id="hint">click a port to dispatch · ship to select<br>space pause · j step 30 min</div>
+		<details id="options"><summary>ship options</summary>
+			<label><input id="docking" type="checkbox" checked> dock &amp; wait for cargo (reset)</label>
+			<label><input id="glmLook" type="checkbox" checked> GLM ship &amp; stock style</label>
+			<label><input id="routes" type="checkbox" checked> route lines</label>
+			<label><input id="smooth" type="checkbox"> smooth positions</label>
+			<div id="selectedShip">click a ship to select</div>
+			<label>course <select id="destination"></select></label>
+			<button id="reroute">reroute</button> <button id="sinkShip">sink ship</button>
+		</details>
 		<div id="timeline">
 			<div class="caption"><span>time queue</span><span>next 20 min</span></div>
 			<canvas id="qtl"></canvas>

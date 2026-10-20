@@ -1,5 +1,5 @@
 /*
- * Event-model invariants: every living ship has exactly one queued arrival,
+ * Event-model invariants: every living ship has exactly one current ship event,
  * no event is scheduled in the past, and a port request made while the fleet
  * is full is deferred rather than dropped. Run: node experiments/sim_events_check.js
  */
@@ -13,7 +13,8 @@ function countArrivals(sim, ship) {
 	const kinds = sim.events.kind;
 	const refs = sim.events.ref;
 	for (let i = 0; i < sim.events.size; i++) {
-		if (kinds[i] === 1 && refs[i] === ship) count += 1;
+		if ((kinds[i] === Sim.KIND_ARRIVE || kinds[i] === Sim.KIND_LOAD || kinds[i] === Sim.KIND_UNLOAD) &&
+			refs[i] === ship && sim.events.revision[i] === sim.shipRevision[ship]) count += 1;
 	}
 	return count;
 }
@@ -30,8 +31,8 @@ function checkInvariants(sim) {
 	assert(sim.events.peekTime() >= sim.t, 'no event may sit in the past at t=' + sim.t);
 	for (let ship = 0; ship < Sim.SHIPS; ship++) {
 		if (sim.shipAlive[ship] === 0) continue;
-		assert.strictEqual(countArrivals(sim, ship), 1, 'living ship ' + ship + ' must have one arrival');
-		assert(sim.shipArrive[ship] >= sim.t, 'ship ' + ship + ' arrival must be in the future');
+		assert.strictEqual(countArrivals(sim, ship), 1, 'living ship ' + ship + ' must have one current event');
+		if (sim.shipState[ship] === Sim.SAILING) assert(sim.shipArrive[ship] >= sim.t, 'ship ' + ship + ' arrival must be in the future');
 	}
 	// one self-rescheduling consumption tick per port, never two
 	for (let port = 0; port < Sim.PORTS; port++) {

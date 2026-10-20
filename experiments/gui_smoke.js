@@ -75,9 +75,12 @@ class Element {
 
 const ids = [
 	'c', 'qtl', 'clock', 'qlen', 'events', 'ships', 'delivered', 'consumed', 'next',
+	'glmLook', 'docking', 'routes', 'smooth', 'destination', 'selectedShip', 'reroute', 'sinkShip',
 	'logRate', 'logBody', 'speed', 'speedLabel', 'fleet', 'fleetLabel', 'pause', 'reset'
 ];
 const elements = new Map(ids.map(id => [id, new Element(id)]));
+elements.get('docking').checked = true;
+elements.get('routes').checked = true;
 elements.get('speed').value = '593'; // mirrors index.html
 elements.get('fleet').value = '30';
 const modeButtons = [new Element('continuous'), new Element('jump')];
